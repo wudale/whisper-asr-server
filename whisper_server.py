@@ -170,7 +170,7 @@ async def demo_page():
 
   <div id="result"></div>
 
-  <details open style="margin-top:24px;background:var(--surface);border-radius:12px;padding:16px;">
+  <details style="margin-top:24px;background:var(--surface);border-radius:12px;padding:16px;">
     <summary style="cursor:pointer;font-weight:600;font-size:15px;margin-bottom:12px;" data-i18n="api_examples">📋 API Examples</summary>
     <div class="tabs" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
       <button class="tab active" onclick="switchTab('shell')" style="padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--accent);color:#1e1e2e;cursor:pointer;font-size:13px;font-weight:600;">Shell</button>
@@ -315,6 +315,9 @@ try (Response r = client.newCall(reqCorrect).execute()) {
 
   <div class="footer">
     <span data-i18n="footer_prefix">Endpoint:</span> <code>POST /v1/audio/transcriptions</code> · <code>GET /health</code> · <span>Port 9080</span>
+    <div style="margin-top:12px;font-size:12px;color:var(--sub);">
+      Hangzhou Wujia Technology Co., Ltd. · <a href="mailto:dale.wdl@qq.com" style="color:var(--accent);text-decoration:none;">dale.wdl@qq.com</a>
+    </div>
   </div>
 </div>
 
