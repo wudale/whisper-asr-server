@@ -214,7 +214,18 @@ with open("recording.m4a", "rb") as f:
 data = r.json()
 print(f"Language: {data['language']}")
 for seg in data["segments"]:
-    print(f"[{seg['start']:.1f}s] {seg['text']}")</code></pre>
+    print(f"[{seg['start']:.1f}s] {seg['text']}")
+
+# With LLM correction
+with open("recording.mp3", "rb") as f:
+    r = requests.post(
+        "${API_BASE}/v1/audio/transcriptions",
+        files={"file": f},
+        data={"correct": "true", "response_format": "verbose_json"}
+    )
+data = r.json()
+print(f"Original: {data['text']}")
+print(f"Corrected: {data.get('corrected_text', '(disabled)')}")</code></pre>
     <pre id="code-js" style="background:#11111b;color:#cdd6f4;padding:14px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.6;margin:0;display:none;"><code>// Basic transcription
 const fd = new FormData();
 fd.append("file", fileInput.files[0]);
@@ -235,7 +246,20 @@ const r2 = await fetch(
   { method: "POST", body: fd }
 );
 const { text, language, segments } = await r2.json();
-segments.forEach(s => console.log(`[${s.start}s] ${s.text}`));</code></pre>
+segments.forEach(s => console.log(`[${s.start}s] ${s.text}`));
+
+// With LLM correction
+const fd3 = new FormData();
+fd3.append("file", fileInput.files[0]);
+fd3.append("correct", "true");
+fd3.append("response_format", "verbose_json");
+const r3 = await fetch(
+  "${API_BASE}/v1/audio/transcriptions",
+  { method: "POST", body: fd3 }
+);
+const d3 = await r3.json();
+console.log("Original:", d3.text);
+console.log("Corrected:", d3.corrected_text || "(disabled)");</code></pre>
     <pre id="code-java" style="background:#11111b;color:#cdd6f4;padding:14px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.6;margin:0;display:none;"><code>// OkHttp + Okio (com.squareup.okhttp3:okhttp:4.12.0)
 import okhttp3.*;
 import java.io.File;
@@ -268,7 +292,24 @@ RequestBody bodyZh = new MultipartBody.Builder()
         MediaType.parse("audio/mp4")))
     .addFormDataPart("language", "zh")
     .addFormDataPart("response_format", "verbose_json")
-    .build();</code></pre>
+    .build();
+
+// With LLM correction
+RequestBody bodyCorrect = new MultipartBody.Builder()
+    .setType(MultipartBody.FORM)
+    .addFormDataPart("file", "recording.mp3",
+        RequestBody.create(new File("recording.mp3"),
+        MediaType.parse("audio/mpeg")))
+    .addFormDataPart("correct", "true")
+    .addFormDataPart("response_format", "verbose_json")
+    .build();
+Request reqCorrect = new Request.Builder()
+    .url("${API_BASE}/v1/audio/transcriptions")
+    .post(bodyCorrect)
+    .build();
+try (Response r = client.newCall(reqCorrect).execute()) {
+    System.out.println(r.body().string());
+}</code></pre>
   </details>
 
   <div class="footer">
