@@ -4,11 +4,13 @@ OpenAI-compatible /v1/audio/transcriptions endpoint.
 CPU-only, small model, int8 quantization.
 
 Usage:
-    PATH=$HOME/.local/bin:$PATH python3 whisper_server.py
-    # or with uvicorn directly:
-    PATH=$HOME/.local/bin:$PATH uvicorn whisper_server:app --host 0.0.0.0 --port 9080
+    python3 whisper_server.py                           # start server on :9080
+    python3 whisper_server.py --transcribe audio.mp3    # CLI mode, transcribe & exit
+    python3 whisper_server.py --transcribe audio.mp3 --language zh --format srt
 """
 
+import argparse
+import json
 import os
 import sys
 import time
@@ -693,7 +695,104 @@ def _fmt_srt(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# CLI Mode (offline transcription, no server)
+# ═══════════════════════════════════════════════════════════════════════════
+def transcribe_cli(
+    audio_path: str,
+    language: str | None = None,
+    fmt: str = "text",
+    model_size: str | None = None,
+    output_path: str | None = None,
+):
+    """Transcribe a file directly to stdout (no HTTP server)."""
+    m_size = model_size or MODEL_SIZE
+    m_device = DEVICE
+    m_compute = COMPUTE_TYPE
+    if sys.platform == "darwin":
+        m_device = "cpu"  # faster-whisper CPU-only on macOS; mlx-whisper has its own package
+        m_compute = "int8"
+
+    log.info(f"Loading model '{m_size}' (device={m_device}, compute={m_compute})...")
+    start = time.time()
+    model = WhisperModel(m_size, device=m_device, compute_type=m_compute)
+    log.info(f"Model loaded in {time.time()-start:.1f}s")
+
+    log.info(f"Transcribing: {audio_path}" + (f" [lang={language}]" if language else ""))
+    start = time.time()
+    segments, info = model.transcribe(
+        audio_path,
+        language=language,
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
+    )
+    seg_list = list(segments)
+    full_text = " ".join(s.text.strip() for s in seg_list)
+    elapsed = time.time() - start
+
+    log.info(f"Done in {elapsed:.1f}s ({info.duration/elapsed:.1f}x realtime)"
+             f" — {info.language}({info.language_probability:.2f}) — {len(seg_list)} segments")
+
+    if fmt == "srt":
+        lines = []
+        for i, seg in enumerate(seg_list, 1):
+            lines.append(str(i))
+            lines.append(f"{_fmt_srt(seg.start)} --> {_fmt_srt(seg.end)}")
+            lines.append(seg.text.strip())
+            lines.append("")
+        output = "\n".join(lines)
+    elif fmt == "json":
+        output = json.dumps({"text": full_text}, ensure_ascii=False)
+    elif fmt == "verbose_json":
+        output = json.dumps({
+            "text": full_text,
+            "language": info.language,
+            "duration": info.duration,
+            "segments": [
+                {"id": s.id, "start": round(s.start, 2), "end": round(s.end, 2),
+                 "text": s.text.strip(), "avg_logprob": round(s.avg_logprob, 4)}
+                for s in seg_list
+            ],
+        }, ensure_ascii=False, indent=2)
+    else:  # text (default)
+        output = full_text
+
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(output)
+        log.info(f"Saved to {output_path}")
+    else:
+        print(output)
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
+def _parse_main_args():
+    """Minimal argparse for CLI mode vs server mode."""
+    p = argparse.ArgumentParser(description="Whisper ASR Service")
+    p.add_argument("--transcribe", metavar="FILE", help="Transcribe a file and exit (CLI mode, no server)")
+    p.add_argument("--language", default=None, help="Language code (e.g. en, zh, ja)")
+    p.add_argument("--format", default="text", choices=["text", "json", "srt", "verbose_json"], help="Output format (default: text)")
+    p.add_argument("--model", default=None, help=f"Model size (default: {MODEL_SIZE})")
+    p.add_argument("--output", default=None, help="Save output to file instead of stdout")
+    p.add_argument("--host", default=HOST, help=f"Server bind address (default: {HOST})")
+    p.add_argument("--port", type=int, default=PORT, help=f"Server port (default: {PORT})")
+    return p.parse_args()
+
+
 if __name__ == "__main__":
-    log.info(f"Starting Whisper ASR server on {HOST}:{PORT}")
-    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
+    args = _parse_main_args()
+
+    if args.transcribe:
+        # CLI mode: transcribe one file and exit
+        transcribe_cli(
+            audio_path=args.transcribe,
+            language=args.language,
+            fmt=args.format,
+            model_size=args.model,
+            output_path=args.output,
+        )
+    else:
+        # Server mode
+        log.info(f"Starting Whisper ASR server on {args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")

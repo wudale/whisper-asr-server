@@ -188,9 +188,23 @@ sudo ./ops.sh <command> [options]
 
 > Override: `WHISPER_MODEL=large-v3 sudo ./ops.sh install`
 
-## 🎵 Sample Audio Files
+## 🎵 Sample Audio Files & CLI Quick Test
 
-Quick-test the service with pre-recorded samples in 9 languages:
+```bash
+# CLI mode: transcribe directly (no server needed)
+python3 whisper_server.py --transcribe samples/en.wav
+python3 whisper_server.py --transcribe samples/zh.wav --language zh --format json
+python3 whisper_server.py --transcribe meeting.mp3 --format srt --output meeting.srt
+
+# All CLI options
+python3 whisper_server.py --transcribe <file> \
+    --language en|zh|ja|ko|... \   # omit for auto-detect
+    --format text|json|srt|verbose_json \
+    --model tiny|base|small|medium|large-v3 \
+    --output result.txt            # save to file
+```
+
+Pre-recorded samples in 9 languages:
 
 | Language | File | Content |
 |----------|------|---------|
