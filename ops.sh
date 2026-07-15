@@ -295,6 +295,9 @@ Environment=WHISPER_MODEL=$MODEL_SIZE
 Environment=WHISPER_DEVICE=cpu
 Environment=WHISPER_COMPUTE=$MODEL_COMPUTE
 Environment=WHISPER_PORT=$SERVICE_PORT
+Environment=LLM_API_KEY=
+Environment=LLM_BASE_URL=https://api.openai.com/v1
+Environment=LLM_MODEL=gpt-4o-mini
 ExecStart=/usr/bin/python3 $SERVER_SCRIPT
 Restart=always
 RestartSec=5

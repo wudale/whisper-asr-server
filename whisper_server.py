@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -19,6 +20,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -38,6 +40,12 @@ DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "int8")
 HOST = os.getenv("WHISPER_HOST", "0.0.0.0")
 PORT = int(os.getenv("WHISPER_PORT", "9080"))
+
+# LLM Correction Config
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+LLM_ENABLED = os.getenv("LLM_ENABLED", "").lower() == "true"
 
 # ── Globals ──────────────────────────────────────────────────────────────
 model: Optional[WhisperModel] = None
@@ -153,6 +161,10 @@ async def demo_page():
       <option value="text" data-i18n="fmt_text">Text (text)</option>
       <option value="srt" data-i18n="fmt_srt">Subtitle (srt)</option>
     </select>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:10px 0;color:var(--text);font-size:14px;">
+      <input type="checkbox" id="correctCheck" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+      <span data-i18n="correct_toggle">LLM Correction</span>
+    </label>
     <button class="primary" id="transcribeBtn" disabled data-i18n="btn_transcribe">Transcribe</button>
   </div>
 
@@ -279,6 +291,8 @@ const I18N = {
     fmt_text: 'Text (text)',
     fmt_srt: 'Subtitle (srt)',
     btn_transcribe: 'Transcribe',
+    correct_toggle: 'LLM Correction',
+    corrected_label: 'Corrected Text',
     api_examples: '📋 API Examples',
     footer_prefix: 'Endpoint:',
     selected: 'Selected',
@@ -296,6 +310,8 @@ const I18N = {
     fmt_text: '纯文本 (text)',
     fmt_srt: '字幕格式 (srt)',
     btn_transcribe: '转录',
+    correct_toggle: 'LLM 纠错',
+    corrected_label: '纠错结果',
     api_examples: '📋 API 调用示例',
     footer_prefix: '端点：',
     selected: '已选择',
@@ -313,6 +329,8 @@ const I18N = {
     fmt_text: 'テキスト (text)',
     fmt_srt: '字幕 (srt)',
     btn_transcribe: '文字起こし',
+    correct_toggle: 'LLM 修正',
+    corrected_label: '修正結果',
     api_examples: '📋 API 使用例',
     footer_prefix: 'エンドポイント：',
     selected: '選択中',
@@ -330,6 +348,8 @@ const I18N = {
     fmt_text: '텍스트 (text)',
     fmt_srt: '자막 (srt)',
     btn_transcribe: '텍스트 변환',
+    correct_toggle: 'LLM 보정',
+    corrected_label: '보정 결과',
     api_examples: '📋 API 사용 예',
     footer_prefix: '엔드포인트:',
     selected: '선택됨',
@@ -347,6 +367,8 @@ const I18N = {
     fmt_text: 'Text (text)',
     fmt_srt: 'Untertitel (srt)',
     btn_transcribe: 'Transkribieren',
+    correct_toggle: 'LLM Korrektur',
+    corrected_label: 'Korrigierter Text',
     api_examples: '📋 API-Beispiele',
     footer_prefix: 'Endpunkt:',
     selected: 'Ausgewählt',
@@ -364,6 +386,8 @@ const I18N = {
     fmt_text: 'Texte (text)',
     fmt_srt: 'Sous-titres (srt)',
     btn_transcribe: 'Transcrire',
+    correct_toggle: 'Correction LLM',
+    corrected_label: 'Texte corrigé',
     api_examples: '📋 Exemples API',
     footer_prefix: 'Point de terminaison :',
     selected: 'Sélectionné',
@@ -381,6 +405,8 @@ const I18N = {
     fmt_text: 'Текст (text)',
     fmt_srt: 'Субтитры (srt)',
     btn_transcribe: 'Расшифровать',
+    correct_toggle: 'Коррекция LLM',
+    corrected_label: 'Исправленный текст',
     api_examples: '📋 Примеры API',
     footer_prefix: 'Эндпоинт:',
     selected: 'Выбрано',
@@ -398,6 +424,8 @@ const I18N = {
     fmt_text: 'نص (text)',
     fmt_srt: 'ترجمة (srt)',
     btn_transcribe: 'نسخ',
+    correct_toggle: 'تصحيح LLM',
+    corrected_label: 'النص المصحح',
     api_examples: '📋 أمثلة API',
     footer_prefix: 'نقطة النهاية:',
     selected: 'مُختار',
@@ -481,7 +509,7 @@ function switchLang(lang) { applyLang(lang); }
 // ═══════════════════════════════════════════════════════════════
 const API_BASE = window.location.origin;
 document.querySelectorAll('pre code').forEach(el => {
-  el.textContent = el.textContent.replace(/\$\{API_BASE\}/g, API_BASE);
+  el.textContent = el.textContent.replace(/\\${API_BASE}/g, API_BASE);
 });
 
 const dropzone = document.getElementById('dropzone');
@@ -526,6 +554,9 @@ transcribeBtn.addEventListener('click', async () => {
   const lang = document.getElementById('lang').value;
   if (lang) fd.append('language', lang);
   fd.append('response_format', document.getElementById('fmt').value);
+  if (document.getElementById('correctCheck').checked) {
+    fd.append('correct', 'true');
+  }
 
   try {
     const start = Date.now();
@@ -563,6 +594,13 @@ function renderResult(data, elapsed) {
   html += `<div class="text">${data.text||I18N[currentLang].no_speech}</div>`;
   html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration?data.duration.toFixed(1)+'s':''}</div>`;
 
+  if (data.corrected_text) {
+    html += '<div style="margin-top:12px;padding:14px;border-left:3px solid var(--green);background:#1e2e1e;border-radius:8px;">';
+    html += `<div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px;">✓ ${I18N[currentLang].corrected_label}</div>`;
+    html += `<div style="font-size:16px;line-height:1.7;white-space:pre-wrap;">${data.corrected_text}</div>`;
+    html += '</div>';
+  }
+
   if (data.segments && data.segments.length) {
     html += '<div class="segments">';
     for (const seg of data.segments) {
@@ -575,6 +613,48 @@ function renderResult(data, elapsed) {
 }
 </script>
 </body></html>"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LLM Correction
+# ═══════════════════════════════════════════════════════════════════════════
+async def llm_correct(text: str, language: str | None = None) -> str | None:
+    """Send transcription text to LLM for correction. Returns corrected text or None."""
+    if not LLM_API_KEY and not LLM_ENABLED:
+        return None
+
+    if not LLM_API_KEY:
+        return None
+
+    lang_hint = f" in {language}" if language else ""
+    prompt = (
+        f"Correct the following speech-to-text transcription{lang_hint}. "
+        f"Fix transcription errors, grammar, and punctuation. "
+        f"Preserve the original meaning and style. "
+        f"Output only the corrected text, nothing else:\n\n{text}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                f"{LLM_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {LLM_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": LLM_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                },
+            )
+            r.raise_for_status()
+            corrected = r.json()["choices"][0]["message"]["content"].strip()
+            log.info(f"LLM correction done ({LLM_MODEL}) — text reduced by {max(0, len(text)-len(corrected))} chars")
+            return corrected
+    except Exception as e:
+        log.warning(f"LLM correction failed: {e}")
+        return None
 
 
 # ── Health ───────────────────────────────────────────────────────────────
@@ -595,6 +675,7 @@ async def transcribe(
     file: UploadFile = File(...),
     language: Optional[str] = Form(None),
     response_format: Optional[str] = Form("json"),
+    correct: Optional[bool] = Form(False),
 ):
     """
     OpenAI-compatible transcription endpoint.
@@ -602,6 +683,7 @@ async def transcribe(
     - `file`: audio file (mp3, wav, m4a, ogg, flac, etc.)
     - `language`: language code (e.g. "en", "zh") or None for auto-detect
     - `response_format`: "json" (default), "text", "srt", "verbose_json"
+    - `correct`: enable LLM correction (requires LLM_API_KEY env)
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -645,9 +727,17 @@ async def transcribe(
                  f" — lang={info.language}({info.language_probability:.2f})"
                  f" — {len(seg_list)} segments")
 
+        # ── LLM Correction ────────────────────────────────────────────
+        corrected_text: str | None = None
+        if correct:
+            corrected_text = await llm_correct(full_text, info.language)
+
         # ── Build response ────────────────────────────────────────────
         if response_format == "text":
-            return JSONResponse({"text": full_text})
+            resp = {"text": full_text}
+            if corrected_text:
+                resp["corrected_text"] = corrected_text
+            return JSONResponse(resp)
 
         if response_format == "srt":
             srt_lines = []
@@ -656,10 +746,13 @@ async def transcribe(
                 srt_lines.append(f"{_fmt_srt(seg.start)} --> {_fmt_srt(seg.end)}")
                 srt_lines.append(seg.text.strip())
                 srt_lines.append("")
-            return JSONResponse({"text": "\n".join(srt_lines)})
+            resp = {"text": "\n".join(srt_lines)}
+            if corrected_text:
+                resp["corrected_text"] = corrected_text
+            return JSONResponse(resp)
 
         if response_format == "verbose_json":
-            return {
+            resp = {
                 "text": full_text,
                 "language": info.language,
                 "duration": info.duration,
@@ -675,9 +768,15 @@ async def transcribe(
                     for s in seg_list
                 ],
             }
+            if corrected_text:
+                resp["corrected_text"] = corrected_text
+            return resp
 
         # Default: "json"
-        return {"text": full_text}
+        resp = {"text": full_text}
+        if corrected_text:
+            resp["corrected_text"] = corrected_text
+        return resp
 
     except Exception as e:
         log.error(f"Transcription failed: {e}")
@@ -704,6 +803,7 @@ def transcribe_cli(
     fmt: str = "text",
     model_size: str | None = None,
     output_path: str | None = None,
+    correct: bool = False,
 ):
     """Transcribe a file directly to stdout (no HTTP server)."""
     m_size = model_size or MODEL_SIZE
@@ -734,6 +834,20 @@ def transcribe_cli(
     log.info(f"Done in {elapsed:.1f}s ({info.duration/elapsed:.1f}x realtime)"
              f" — {info.language}({info.language_probability:.2f}) — {len(seg_list)} segments")
 
+    # ── LLM Correction (CLI) ────────────────────────────────────────
+    correct_text_output = None
+    if correct:
+        log.info(f"LLM correction enabled, sending to {LLM_MODEL}...")
+        try:
+            correct_text_output = asyncio.run(llm_correct(full_text, info.language))
+        except RuntimeError:
+            # If already in event loop (e.g. some environments)
+            loop = asyncio.new_event_loop()
+            correct_text_output = loop.run_until_complete(llm_correct(full_text, info.language))
+            loop.close()
+        if correct_text_output:
+            log.info("LLM correction done ✅")
+
     if fmt == "srt":
         lines = []
         for i, seg in enumerate(seg_list, 1):
@@ -743,9 +857,12 @@ def transcribe_cli(
             lines.append("")
         output = "\n".join(lines)
     elif fmt == "json":
-        output = json.dumps({"text": full_text}, ensure_ascii=False)
+        resp = {"text": full_text}
+        if correct_text_output:
+            resp["corrected_text"] = correct_text_output
+        output = json.dumps(resp, ensure_ascii=False)
     elif fmt == "verbose_json":
-        output = json.dumps({
+        resp = {
             "text": full_text,
             "language": info.language,
             "duration": info.duration,
@@ -754,9 +871,14 @@ def transcribe_cli(
                  "text": s.text.strip(), "avg_logprob": round(s.avg_logprob, 4)}
                 for s in seg_list
             ],
-        }, ensure_ascii=False, indent=2)
+        }
+        if correct_text_output:
+            resp["corrected_text"] = correct_text_output
+        output = json.dumps(resp, ensure_ascii=False, indent=2)
     else:  # text (default)
         output = full_text
+        if correct_text_output:
+            output += "\n\n--- Corrected ---\n" + correct_text_output
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:
@@ -775,6 +897,7 @@ def _parse_main_args():
     p.add_argument("--format", default="text", choices=["text", "json", "srt", "verbose_json"], help="Output format (default: text)")
     p.add_argument("--model", default=None, help=f"Model size (default: {MODEL_SIZE})")
     p.add_argument("--output", default=None, help="Save output to file instead of stdout")
+    p.add_argument("--correct", action="store_true", help="Enable LLM correction (requires LLM_API_KEY)")
     p.add_argument("--host", default=HOST, help=f"Server bind address (default: {HOST})")
     p.add_argument("--port", type=int, default=PORT, help=f"Server port (default: {PORT})")
     return p.parse_args()
@@ -791,6 +914,7 @@ if __name__ == "__main__":
             fmt=args.format,
             model_size=args.model,
             output_path=args.output,
+            correct=args.correct,
         )
     else:
         # Server mode

@@ -158,6 +158,43 @@ try (Response r = new OkHttpClient().newCall(
 First segment text
 ```
 
+## 🤖 LLM Correction (Optional)
+
+Improve transcription quality by passing results through an LLM for grammar/accuracy correction.
+
+### Configuration
+
+| Env Variable | Default | Description |
+|---|---|---|
+| `LLM_API_KEY` | — | API key (OpenAI / DeepSeek / Qwen / Ollama etc.) |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `LLM_MODEL` | `gpt-4o-mini` | Model name |
+
+### Usage
+
+```bash
+# API: add correct=true
+curl -X POST http://localhost:9080/v1/audio/transcriptions \
+  -F "file=@recording.mp3" \
+  -F "correct=true" \
+  -F "response_format=verbose_json"
+
+# Response includes corrected_text
+{
+  "text": "original transcription...",
+  "corrected_text": "corrected transcription...",
+  "language": "zh",
+  ...
+}
+
+# CLI: add --correct
+python3 whisper_server.py --transcribe recording.mp3 --correct
+
+# Demo UI: check "LLM Correction" checkbox before transcribing
+```
+
+> 💡 Uses language-aware prompt. Auto-detects original language from transcription result. Falls back gracefully when no API key is configured.
+
 ## 🔧 Operations
 
 ```bash
