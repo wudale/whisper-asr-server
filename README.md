@@ -76,8 +76,7 @@ For macOS or user-level install (no root):
 ```
 whisper-asr-server/
 ├── whisper_server.py          # FastAPI service
-├── ops.sh                     # Ops script (install, start/stop, model switching)
-├── whisper-asr-server.service     # systemd unit template
+├── ops.sh                     # Ops script (auto-generates systemd/launchd unit)
 ├── LICENSE                    # MIT
 └── README.md
 ```
