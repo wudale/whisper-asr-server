@@ -60,6 +60,8 @@ For macOS or user-level install (no root):
 ./ops.sh install --user
 ```
 
+![Demo UI](docs/demo.png)
+
 ## 📊 vs. Alternatives
 
 | Solution | Privacy | Cost | Setup | Hardware | Multilingual |
