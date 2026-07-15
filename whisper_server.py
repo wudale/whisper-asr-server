@@ -1001,20 +1001,39 @@ def split_corrected_to_segments(
     corrected_group_texts: dict[int, str | None],
 ) -> list[dict]:
     """Map group-level corrected text back to individual segments."""
-    seg_to_group: dict[int, int] = {}
+    # Step 1: per-group, pre-compute each segment's slice of corrected text
+    seg_corrected: dict[int, str | None] = {}
     for g in groups:
-        for sid in g["seg_ids"]:
-            seg_to_group[sid] = g["id"]
+        corrected = corrected_group_texts.get(g["id"])
+        if not corrected:
+            for sid in g["seg_ids"]:
+                seg_corrected[sid] = None
+            continue
 
-    group_word_counts: dict[int, list[tuple[int, int]]] = {}
-    for g in groups:
-        counts = []
-        for sid in g["seg_ids"]:
-            s = next(s for s in seg_list if s.id == sid)
-            wc = len(s.text.strip().split()) or 1
-            counts.append((sid, wc))
-        group_word_counts[g["id"]] = counts
+        sids = g["seg_ids"]
+        if len(sids) == 1:
+            seg_corrected[sids[0]] = corrected
+            continue
 
+        # Multiple segments: split corrected text proportionally
+        words = corrected.split()
+        orig_sizes = []
+        for sid in sids:
+            s = next(x for x in seg_list if x.id == sid)
+            orig_sizes.append(max(1, len(s.text.strip().split())))
+        total = sum(orig_sizes)
+        start = 0
+        for i, sid in enumerate(sids):
+            ratio = orig_sizes[i] / total
+            n = max(1, round(len(words) * ratio))
+            if i == len(sids) - 1:
+                # Last segment gets remaining words
+                seg_corrected[sid] = " ".join(words[start:])
+            else:
+                seg_corrected[sid] = " ".join(words[start:start + n])
+                start += n
+
+    # Step 2: build segment dicts with pre-computed corrected_text
     result = []
     for seg in seg_list:
         seg_dict = {
@@ -1025,23 +1044,9 @@ def split_corrected_to_segments(
             "avg_logprob": round(seg.avg_logprob, 4),
             "no_speech_prob": round(seg.no_speech_prob, 4),
         }
-        gid = seg_to_group.get(seg.id)
-        if gid and corrected_group_texts.get(gid):
-            group_corrected = corrected_group_texts[gid]
-            counts = group_word_counts[gid]
-            if len(counts) == 1:
-                seg_dict["corrected_text"] = group_corrected
-            else:
-                group_words = group_corrected.split()
-                total = sum(c[1] for c in counts) or 1
-                pos = 0
-                for sid, wc in counts:
-                    ratio = wc / total
-                    n = max(1, round(len(group_words) * ratio))
-                    if sid == seg.id:
-                        seg_dict["corrected_text"] = " ".join(group_words[pos:pos + n])
-                        break
-                    pos += n
+        ct = seg_corrected.get(seg.id)
+        if ct:
+            seg_dict["corrected_text"] = ct
         result.append(seg_dict)
 
     return result
