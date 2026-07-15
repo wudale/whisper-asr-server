@@ -205,21 +205,19 @@ print(f'Model loaded ✓ ({time.time()-start:.1f}s)')
         ok "faster-whisper + '$MODEL_SIZE' ready"
 
     elif [ "$OS" = "macos" ]; then
-        if ! sysctl -n machdep.cpu.brand_string 2>/dev/null | grep -qi "Apple"; then
-            err "mlx-whisper requires Apple Silicon. Intel Mac not supported"; exit 1
-        fi
-        info "macOS Apple Silicon → mlx-whisper (GPU)"
-        if $DRY_RUN; then
-            echo "  pip3 install --user mlx-whisper fastapi uvicorn python-multipart"
-        else
-            pip3 install --user mlx-whisper fastapi uvicorn python-multipart 2>&1 | tail -3
-        fi
+        if sysctl -n machdep.cpu.brand_string 2>/dev/null | grep -qi "Apple"; then
+            info "macOS Apple Silicon → mlx-whisper (GPU)"
+            if $DRY_RUN; then
+                echo "  pip3 install --user mlx-whisper fastapi uvicorn python-multipart"
+            else
+                pip3 install --user mlx-whisper fastapi uvicorn python-multipart 2>&1 | tail -3
+            fi
 
-        info "downloading model 'mlx-community/whisper-${MODEL_SIZE}'(first run: 2-5 min)..."
-        if $DRY_RUN; then
-            echo "  python3 -c \"mlx_whisper.transcribe(..., path_or_hf_repo='mlx-community/whisper-${MODEL_SIZE}')\""
-        else
-            python3 -c "
+            info "downloading model 'mlx-community/whisper-${MODEL_SIZE}'(first run: 2-5 min)..."
+            if $DRY_RUN; then
+                echo "  python3 -c \"mlx_whisper.transcribe(..., path_or_hf_repo='mlx-community/whisper-${MODEL_SIZE}')\""
+            else
+                python3 -c "
 import mlx_whisper, struct, wave, tempfile, os
 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
     with wave.open(f, 'w') as w:
@@ -230,8 +228,30 @@ with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
     os.unlink(f.name)
 print('Model loaded ✓')
 " 2>&1 | tail -3
+            fi
+            ok "mlx-whisper + '$MODEL_SIZE' ready"
+        else
+            info "macOS Intel → faster-whisper (CPU, compute=$MODEL_COMPUTE)"
+            if $DRY_RUN; then
+                echo "  pip3 install --user faster-whisper fastapi uvicorn python-multipart"
+            else
+                pip3 install --user faster-whisper fastapi uvicorn python-multipart 2>&1 | tail -3
+            fi
+
+            info "downloading model '$MODEL_SIZE' (first run: 3-10 min)..."
+            if $DRY_RUN; then
+                echo "  python3 -c \"WhisperModel('${MODEL_SIZE}', device='cpu', compute_type='${MODEL_COMPUTE}')\""
+            else
+                python3 -c "
+from faster_whisper import WhisperModel
+import time
+start = time.time()
+m = WhisperModel('${MODEL_SIZE}', device='cpu', compute_type='${MODEL_COMPUTE}')
+print(f'Model loaded ✓ ({time.time()-start:.1f}s)')
+" 2>&1 | grep -vE 'Warning|HTTP|HEAD|GET|You are'
+            fi
+            ok "faster-whisper + '$MODEL_SIZE' ready"
         fi
-        ok "mlx-whisper + '$MODEL_SIZE' ready"
     fi
 }
 

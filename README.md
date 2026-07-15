@@ -230,8 +230,8 @@ curl -X POST http://localhost:9080/v1/audio/transcriptions \
 | OS | Engine | Python | Notes |
 |----|--------|:------:|-------|
 | **Linux** | faster-whisper (CTranslate2) | 3.10+ | NVIDIA GPU optional but recommended |
-| **macOS** | mlx-whisper (MLX) | 3.10+ | macOS 13+, Apple M-series only |
-| macOS Intel | Not supported | — | Manually install faster-whisper instead |
+| **macOS Apple Silicon** | mlx-whisper (MLX GPU) | 3.10+ | macOS 13+, M-series |
+| **macOS Intel** | faster-whisper (CTranslate2 CPU) | 3.10+ | same as Linux CPU |
 
 ## 🤝 Contributing
 
