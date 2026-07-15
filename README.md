@@ -244,9 +244,13 @@ Issues and PRs welcome! Especially:
 
 ## 📄 License
 
-MIT License © 2026 Whisper ASR Contributors
+MIT License © 2026 杭州吾嘉科技有限公司 (Hangzhou Wujia Technology Co., Ltd.)
 
 Whisper model weights by OpenAI (MIT licensed), downloaded automatically from HuggingFace Hub.
+
+---
+
+**Contact**: dale.wdl@qq.com | **GitHub**: [@wudale](https://github.com/wudale)
 
 ---
 
