@@ -332,6 +332,7 @@ const I18N = {
     fmt_srt: 'Subtitle (srt)',
     btn_transcribe: 'Transcribe',
     correct_toggle: 'LLM Correction',
+    raw_json: 'Raw JSON',
     corrected_label: 'Corrected Text',
     api_examples: '📋 API Examples',
     footer_prefix: 'Endpoint:',
@@ -351,6 +352,7 @@ const I18N = {
     fmt_srt: '字幕格式 (srt)',
     btn_transcribe: '转录',
     correct_toggle: 'LLM 纠错',
+    raw_json: '原始 JSON',
     corrected_label: '纠错结果',
     api_examples: '📋 API 调用示例',
     footer_prefix: '端点：',
@@ -370,6 +372,7 @@ const I18N = {
     fmt_srt: '字幕 (srt)',
     btn_transcribe: '文字起こし',
     correct_toggle: 'LLM 修正',
+    raw_json: '生JSON',
     corrected_label: '修正結果',
     api_examples: '📋 API 使用例',
     footer_prefix: 'エンドポイント：',
@@ -389,6 +392,7 @@ const I18N = {
     fmt_srt: '자막 (srt)',
     btn_transcribe: '텍스트 변환',
     correct_toggle: 'LLM 보정',
+    raw_json: '원본 JSON',
     corrected_label: '보정 결과',
     api_examples: '📋 API 사용 예',
     footer_prefix: '엔드포인트:',
@@ -408,6 +412,7 @@ const I18N = {
     fmt_srt: 'Untertitel (srt)',
     btn_transcribe: 'Transkribieren',
     correct_toggle: 'LLM Korrektur',
+    raw_json: 'Roh-JSON',
     corrected_label: 'Korrigierter Text',
     api_examples: '📋 API-Beispiele',
     footer_prefix: 'Endpunkt:',
@@ -427,6 +432,7 @@ const I18N = {
     fmt_srt: 'Sous-titres (srt)',
     btn_transcribe: 'Transcrire',
     correct_toggle: 'Correction LLM',
+    raw_json: 'JSON brut',
     corrected_label: 'Texte corrigé',
     api_examples: '📋 Exemples API',
     footer_prefix: 'Point de terminaison :',
@@ -446,6 +452,7 @@ const I18N = {
     fmt_srt: 'Субтитры (srt)',
     btn_transcribe: 'Расшифровать',
     correct_toggle: 'Коррекция LLM',
+    raw_json: 'Сырой JSON',
     corrected_label: 'Исправленный текст',
     api_examples: '📋 Примеры API',
     footer_prefix: 'Эндпоинт:',
@@ -465,6 +472,7 @@ const I18N = {
     fmt_srt: 'ترجمة (srt)',
     btn_transcribe: 'نسخ',
     correct_toggle: 'تصحيح LLM',
+    raw_json: 'JSON الخام',
     corrected_label: 'النص المصحح',
     api_examples: '📋 أمثلة API',
     footer_prefix: 'نقطة النهاية:',
@@ -558,6 +566,7 @@ const fileInfo = document.getElementById('file-info');
 const transcribeBtn = document.getElementById('transcribeBtn');
 const resultDiv = document.getElementById('result');
 let selectedFile = null;
+let lastRawData = null;
 
 // Health check
 fetch('/health').then(r=>r.json()).then(d=>{
@@ -606,6 +615,7 @@ transcribeBtn.addEventListener('click', async () => {
 
     if (!r.ok) { resultDiv.innerHTML = `<div class="err">❌ ${data.detail||r.statusText}</div>`; return; }
 
+    lastRawData = data;
     renderResult(data, elapsed);
   } catch(e) {
     resultDiv.innerHTML = `<div class="err">❌ ${e.message}</div>`;
@@ -649,7 +659,24 @@ function renderResult(data, elapsed) {
     }
     html += '</div>';
   }
+
+  html += '<div style="margin-top:12px;text-align:right;">';
+  html += `<button onclick="toggleRaw()" style="background:none;border:1px solid var(--border);color:var(--sub);padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">📋 ${I18N[currentLang].raw_json}</button>`;
+  html += '</div>';
+  html += '<div id="rawJson" style="display:none;margin-top:8px;background:#11111b;border-radius:8px;padding:14px;overflow-x:auto;font-size:12px;line-height:1.5;max-height:500px;overflow-y:auto;"><pre style="margin:0;color:#cdd6f4;white-space:pre-wrap;word-break:break-all;">';
+  html += escapeHtml(JSON.stringify(data, null, 2));
+  html += '</pre></div>';
+
   resultDiv.innerHTML = html;
+}
+
+function toggleRaw() {
+  const el = document.getElementById('rawJson');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 </body></html>"""
