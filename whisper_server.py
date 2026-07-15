@@ -641,6 +641,8 @@ function switchTab(lang) {
 function renderResult(data, elapsed) {
   let html = '';
   if (data.language) html += `<div class="lang-badge">${data.language}${data.language_probability ? ' · '+Math.round(data.language_probability*100)+'%' : ''}</div>`;
+  if (data.correction === 'completed') html += '<span style="display:inline-block;background:var(--green);color:#1e1e2e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-bottom:8px;">✓ LLM corrected</span>';
+  if (data.correction && data.correction !== 'completed') html += `<span style="display:inline-block;background:var(--red);color:#1e1e2e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-bottom:8px;">⚠ ${data.correction}</span>`;
   html += `<div class="text">${data.text||I18N[currentLang].no_speech}</div>`;
   html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration?data.duration.toFixed(1)+'s':''}</div>`;
 
@@ -794,14 +796,24 @@ async def transcribe(
 
         # ── LLM Correction ────────────────────────────────────────────
         corrected_text: str | None = None
+        correction = None
         if correct:
-            corrected_text = await llm_correct(full_text, info.language)
+            if LLM_MODEL:
+                corrected_text = await llm_correct(full_text, info.language)
+                if corrected_text:
+                    correction = "completed"
+                else:
+                    correction = "failed"
+            else:
+                correction = "skipped (LLM_MODEL not configured)"
 
         # ── Build response ────────────────────────────────────────────
         if response_format == "text":
             resp = {"text": full_text}
             if corrected_text:
                 resp["corrected_text"] = corrected_text
+            if correction:
+                resp["correction"] = correction
             return JSONResponse(resp)
 
         if response_format == "srt":
@@ -814,6 +826,8 @@ async def transcribe(
             resp = {"text": "\n".join(srt_lines)}
             if corrected_text:
                 resp["corrected_text"] = corrected_text
+            if correction:
+                resp["correction"] = correction
             return JSONResponse(resp)
 
         if response_format == "verbose_json":
@@ -835,12 +849,16 @@ async def transcribe(
             }
             if corrected_text:
                 resp["corrected_text"] = corrected_text
+            if correction:
+                resp["correction"] = correction
             return resp
 
         # Default: "json"
         resp = {"text": full_text}
         if corrected_text:
             resp["corrected_text"] = corrected_text
+        if correction:
+            resp["correction"] = correction
         return resp
 
     except Exception as e:
