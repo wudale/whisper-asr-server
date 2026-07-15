@@ -188,6 +188,29 @@ sudo ./ops.sh <command> [options]
 
 > Override: `WHISPER_MODEL=large-v3 sudo ./ops.sh install`
 
+## 🎵 Sample Audio Files
+
+Quick-test the service with pre-recorded samples in 9 languages:
+
+| Language | File | Content |
+|----------|------|---------|
+| 🇬🇧 English | [`samples/en.wav`](samples/en.wav) | "Hello, this is a test of the Whisper speech recognition system..." |
+| 🇨🇳 Chinese | [`samples/zh.wav`](samples/zh.wav) | "你好，这是一个语音识别测试..." |
+| 🇯🇵 Japanese | [`samples/ja.wav`](samples/ja.wav) | "こんにちは、これは音声認識のテストです..." |
+| 🇰🇷 Korean | [`samples/ko.wav`](samples/ko.wav) | "안녕하세요, 이것은 음성 인식 테스트입니다..." |
+| 🇫🇷 French | [`samples/fr.wav`](samples/fr.wav) | "Bonjour, ceci est un test du système..." |
+| 🇩🇪 German | [`samples/de.wav`](samples/de.wav) | "Hallo, dies ist ein Test des Spracherkennungssystems..." |
+| 🇪🇸 Spanish | [`samples/es.wav`](samples/es.wav) | "Hola, esta es una prueba del sistema..." |
+| 🇷🇺 Russian | [`samples/ru.wav`](samples/ru.wav) | "Здравствуйте, это тест системы распознавания речи..." |
+| 🇸🇦 Arabic | [`samples/ar.wav`](samples/ar.wav) | "مرحباً، هذا اختبار لنظام التعرف على الكلام..." |
+
+```bash
+# Quick test any sample
+curl -X POST http://localhost:9080/v1/audio/transcriptions \
+  -F "file=@samples/zh.wav" \
+  -F "response_format=verbose_json"
+```
+
 ## 📋 Requirements
 
 | OS | Engine | Python | Notes |
