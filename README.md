@@ -179,6 +179,13 @@ Improve transcription quality by passing results through an LLM for grammar/accu
 | `LLM_API_KEY` | — | API key (OpenAI / DeepSeek / Qwen / Ollama etc.) |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `CORRECTION_GAP` | `2.0` | Silence gap (seconds) to split correction groups. Larger = fewer groups, less context fragmentation |
+| `CORRECTION_CONFIDENCE` | `-0.5` | Skip LLM correction for groups where all segments have avg_logprob above this threshold. Higher = more groups skipped (faster, cheaper) |
+
+### How Grouping Works
+
+Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTION_GAP` seconds form one group and are sent to the LLM in a single call — keeping conversational context intact while minimizing API calls.
+
+Groups where all segments have `avg_logprob > CORRECTION_CONFIDENCE` skip the LLM entirely — clear audio costs nothing.
 
 > ⚠️ Correction is **disabled** until `LLM_MODEL` is set. When disabled, `correct=true` API parameters are silently ignored.
 

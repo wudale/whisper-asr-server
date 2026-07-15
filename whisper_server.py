@@ -46,6 +46,7 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 CORRECTION_GAP = float(os.getenv("CORRECTION_GAP", "2.0"))
+CORRECTION_CONFIDENCE = float(os.getenv("CORRECTION_CONFIDENCE", "-0.5"))
 
 # ── Globals ──────────────────────────────────────────────────────────────
 model: Optional[WhisperModel] = None
@@ -819,7 +820,20 @@ async def transcribe(
                 corrected_group_texts: dict[int, str | None] = {}
                 all_ok = True
                 for g in groups:
-                    corrected = await llm_correct(g["original"], info.language)
+                    # Skip LLM if all segments in this group have high confidence
+                    group_segs = [s for s in seg_list if s.id in g["seg_ids"]]
+                    high_conf = all(
+                        s.avg_logprob > CORRECTION_CONFIDENCE for s in group_segs
+                    )
+                    skip_reason = None
+                    if high_conf:
+                        skip_reason = f"high confidence (avg_logprob>{CORRECTION_CONFIDENCE})"
+                        corrected = None
+                        all_ok = True
+                    else:
+                        corrected = await llm_correct(g["original"], info.language)
+                        if not corrected:
+                            all_ok = False
                     corrected_group_texts[g["id"]] = corrected
                     corrected_groups.append({
                         "id": g["id"],
@@ -828,9 +842,8 @@ async def transcribe(
                         "original": g["original"],
                         "corrected": corrected,
                         "seg_ids": g["seg_ids"],
+                        "skip_reason": skip_reason,
                     })
-                    if not corrected:
-                        all_ok = False
                 # Backfill corrections to individual segments
                 corrected_seg_list = split_corrected_to_segments(
                     seg_list, groups, corrected_group_texts
@@ -1090,12 +1103,25 @@ def transcribe_cli(
             corrected_group_texts = {}
             all_ok = True
             for g in groups:
-                try:
-                    seg_corrected = asyncio.run(llm_correct(g["original"], info.language))
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    seg_corrected = loop.run_until_complete(llm_correct(g["original"], info.language))
-                    loop.close()
+                # Skip LLM if all segments in this group have high confidence
+                group_segs = [s for s in seg_list if s.id in g["seg_ids"]]
+                high_conf = all(
+                    s.avg_logprob > CORRECTION_CONFIDENCE for s in group_segs
+                )
+                skip_reason = None
+                if high_conf:
+                    skip_reason = f"high confidence (avg_logprob>{CORRECTION_CONFIDENCE})"
+                    seg_corrected = None
+                    all_ok = True
+                else:
+                    try:
+                        seg_corrected = asyncio.run(llm_correct(g["original"], info.language))
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        seg_corrected = loop.run_until_complete(llm_correct(g["original"], info.language))
+                        loop.close()
+                    if not seg_corrected:
+                        all_ok = False
                 corrected_group_texts[g["id"]] = seg_corrected
                 corrected_groups.append({
                     "id": g["id"],
@@ -1104,13 +1130,12 @@ def transcribe_cli(
                     "original": g["original"],
                     "corrected": seg_corrected,
                     "seg_ids": g["seg_ids"],
+                    "skip_reason": skip_reason,
                 })
-                if not seg_corrected:
-                    all_ok = False
             corrected_seg_list = split_corrected_to_segments(
                 seg_list, groups, corrected_group_texts
             )
-            if all_ok and any(cg.get('corrected') for cg in corrected_groups):
+            if all_ok and any(cg.get('corrected') for cg in corrected_groups if cg.get('corrected')):
                 correction = "completed"
                 log.info("LLM correction done")
             elif all_ok:

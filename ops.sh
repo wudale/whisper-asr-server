@@ -299,6 +299,7 @@ Environment=LLM_API_KEY=
 Environment=LLM_BASE_URL=https://api.openai.com/v1
 Environment=LLM_MODEL=
 Environment=CORRECTION_GAP=2.0
+Environment=CORRECTION_CONFIDENCE=-0.5
 ExecStart=/usr/bin/python3 $SERVER_SCRIPT
 Restart=always
 RestartSec=5
