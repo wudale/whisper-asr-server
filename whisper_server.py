@@ -45,6 +45,7 @@ PORT = int(os.getenv("WHISPER_PORT", "9080"))
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
+CORRECTION_GAP = float(os.getenv("CORRECTION_GAP", "2.0"))
 
 # ── Globals ──────────────────────────────────────────────────────────────
 model: Optional[WhisperModel] = None
@@ -646,8 +647,8 @@ function renderResult(data, elapsed) {
   html += `<div class="text">${data.text||I18N[currentLang].no_speech}</div>`;
   html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration?data.duration.toFixed(1)+'s':''}</div>`;
 
-  if (data.corrected_segments) {
-    const correctedText = data.corrected_segments.map(cs => cs.corrected || cs.original).filter(Boolean).join(' ');
+  if (data.corrected_groups) {
+    const correctedText = data.corrected_groups.map(cs => cs.corrected || cs.original).filter(Boolean).join(' ');
     if (correctedText) {
       html += '<div style="margin-top:12px;padding:14px;border-left:3px solid var(--green);background:#1e2e1e;border-radius:8px;">';
       html += `<div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px;">✓ ${I18N[currentLang].corrected_label}</div>`;
@@ -662,8 +663,8 @@ function renderResult(data, elapsed) {
       const seg = data.segments[i];
       const ts = seg.start.toFixed(1)+'s - '+seg.end.toFixed(1)+'s';
       let segHtml = `<div class="seg"><div class="ts">${ts}</div><div class="txt">${seg.text}</div></div>`;
-      if (data.corrected_segments && data.corrected_segments[i] && data.corrected_segments[i].corrected) {
-        segHtml += `<div class="seg" style="border-left:2px solid var(--green);padding-left:12px;color:var(--green);font-size:13px;">${data.corrected_segments[i].corrected}</div>`;
+      if (data.corrected_groups && data.corrected_groups[i] && data.corrected_groups[i].corrected) {
+        segHtml += `<div class="seg" style="border-left:2px solid var(--green);padding-left:12px;color:var(--green);font-size:13px;">${data.corrected_groups[i].corrected}</div>`;
       }
       html += segHtml;
     }
@@ -802,38 +803,40 @@ async def transcribe(
                  f" — lang={info.language}({info.language_probability:.2f})"
                  f" — {len(seg_list)} segments")
 
-                # ── LLM Correction (per-segment) ───────────────────────────────
-        corrected_segments: list[dict] | None = None
+                        # ── LLM Correction (time-gap groups) ──────────────────────────
+        corrected_groups: list[dict] | None = None
         correction = None
         if correct:
             if LLM_MODEL:
-                corrected_segments = []
-                for seg in seg_list:
-                    seg_corrected = await llm_correct(seg.text.strip(), info.language)
-                    if seg_corrected:
-                        corrected_segments.append({
-                            "id": seg.id,
-                            "original": seg.text.strip(),
-                            "corrected": seg_corrected,
-                        })
-                    else:
-                        corrected_segments.append({
-                            "id": seg.id,
-                            "original": seg.text.strip(),
-                            "corrected": None,
-                        })
-                if any(cs["corrected"] for cs in corrected_segments):
+                groups = group_segments(seg_list, CORRECTION_GAP)
+                log.info(f"LLM correction: {len(groups)} group(s) from {len(seg_list)} "
+                         f"segments (gap≥{CORRECTION_GAP}s)")
+                corrected_groups = []
+                all_ok = True
+                for g in groups:
+                    corrected = await llm_correct(g["original"], info.language)
+                    corrected_groups.append({
+                        "id": g["id"],
+                        "start": g["start"],
+                        "end": g["end"],
+                        "original": g["original"],
+                        "corrected": corrected,
+                        "seg_ids": g["seg_ids"],
+                    })
+                    if not corrected:
+                        all_ok = False
+                if all_ok:
                     correction = "completed"
                 else:
-                    correction = "failed"
+                    correction = "completed with partial failures"
             else:
                 correction = "skipped (LLM_MODEL not configured)"
 
-        # ── Build response ────────────────────────────────────────────# ── Build response ────────────────────────────────────────────
+        # ── Build response ────────────────────────────────────────────
         if response_format == "text":
             resp = {"text": full_text}
-            if corrected_segments:
-                resp["corrected_segments"] = corrected_segments
+            if corrected_groups:
+                resp["corrected_groups"] = corrected_groups
             if correction:
                 resp["correction"] = correction
             return JSONResponse(resp)
@@ -846,8 +849,8 @@ async def transcribe(
                 srt_lines.append(seg.text.strip())
                 srt_lines.append("")
             resp = {"text": "\n".join(srt_lines)}
-            if corrected_segments:
-                resp["corrected_segments"] = corrected_segments
+            if corrected_groups:
+                resp["corrected_groups"] = corrected_groups
             if correction:
                 resp["correction"] = correction
             return JSONResponse(resp)
@@ -869,16 +872,16 @@ async def transcribe(
                     for s in seg_list
                 ],
             }
-            if corrected_segments:
-                resp["corrected_segments"] = corrected_segments
+            if corrected_groups:
+                resp["corrected_groups"] = corrected_groups
             if correction:
                 resp["correction"] = correction
             return resp
 
         # Default: "json"
         resp = {"text": full_text}
-        if corrected_segments:
-            resp["corrected_segments"] = corrected_segments
+        if corrected_groups:
+            resp["corrected_groups"] = corrected_groups
         if correction:
             resp["correction"] = correction
         return resp
@@ -897,6 +900,69 @@ def _fmt_srt(seconds: float) -> str:
     s = int(seconds % 60)
     ms = int((seconds % 1) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Group Segments by Time Gap
+# ═══════════════════════════════════════════════════════════════════════════
+def group_segments(
+    segments: list,
+    gap_threshold: float = 2.0,
+) -> list[dict]:
+    """Group segments by silence gap. Returns list of groups.
+
+    Each group: {id, start, end, original (joined text), seg_ids [list]}.
+    A new group starts when seg[i+1].start - seg[i].end >= gap_threshold.
+    """
+    if not segments:
+        return []
+
+    groups: list[dict] = []
+    current = {
+        "id": 1,
+        "start": segments[0].start,
+        "end": segments[0].end,
+        "texts": [segments[0].text.strip()],
+        "seg_ids": [segments[0].id],
+    }
+
+    for i in range(1, len(segments)):
+        gap = segments[i].start - segments[i - 1].end
+        if gap >= gap_threshold:
+            # Close current group
+            groups.append({
+                "id": current["id"],
+                "start": round(current["start"], 2),
+                "end": round(current["end"], 2),
+                "original": " ".join(current["texts"]),
+                "seg_ids": current["seg_ids"],
+            })
+            # Start new group
+            current = {
+                "id": len(groups) + 1,
+                "start": segments[i].start,
+                "end": segments[i].end,
+                "texts": [segments[i].text.strip()],
+                "seg_ids": [segments[i].id],
+            }
+        else:
+            # Same group
+            current["texts"].append(segments[i].text.strip())
+            current["end"] = segments[i].end
+            current["seg_ids"].append(segments[i].id)
+
+    # Last group
+    groups.append({
+        "id": current["id"],
+        "start": round(current["start"], 2),
+        "end": round(current["end"], 2),
+        "original": " ".join(current["texts"]),
+        "seg_ids": current["seg_ids"],
+    })
+
+    return groups
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -940,32 +1006,40 @@ def transcribe_cli(
              f" — {info.language}({info.language_probability:.2f}) — {len(seg_list)} segments")
 
     # ── LLM Correction (CLI) ────────────────────────────────────────
-    corrected_segments = None
+    corrected_groups = None
     correction = None
     if correct:
         if LLM_MODEL:
-            log.info(f"LLM correction enabled, correcting {len(seg_list)} segments...")
-            corrected_segments = []
-            for seg in seg_list:
+            groups = group_segments(seg_list, CORRECTION_GAP)
+            log.info(f"LLM correction: {len(groups)} group(s) from {len(seg_list)} segments")
+            corrected_groups = []
+            all_ok = True
+            for g in groups:
                 try:
-                    seg_corrected = asyncio.run(llm_correct(seg.text.strip(), info.language))
+                    seg_corrected = asyncio.run(llm_correct(g["original"], info.language))
                 except RuntimeError:
                     loop = asyncio.new_event_loop()
-                    seg_corrected = loop.run_until_complete(llm_correct(seg.text.strip(), info.language))
+                    seg_corrected = loop.run_until_complete(llm_correct(g["original"], info.language))
                     loop.close()
-                corrected_segments.append({
-                    "id": seg.id,
-                    "original": seg.text.strip(),
+                corrected_groups.append({
+                    "id": g["id"],
+                    "start": g["start"],
+                    "end": g["end"],
+                    "original": g["original"],
                     "corrected": seg_corrected,
+                    "seg_ids": g["seg_ids"],
                 })
-            if any(cs["corrected"] for cs in corrected_segments):
+                if not seg_corrected:
+                    all_ok = False
+            if all_ok and any(cg['corrected'] for cg in corrected_groups):
                 correction = "completed"
-                log.info("LLM correction done ✅")
+                log.info("LLM correction done")
+            elif all_ok:
+                correction = "completed with partial failures"
             else:
                 correction = "failed"
         else:
             correction = "skipped (LLM_MODEL not configured)"
-
     if fmt == "srt":
         lines = []
         for i, seg in enumerate(seg_list, 1):
@@ -976,8 +1050,8 @@ def transcribe_cli(
         output = "\n".join(lines)
     elif fmt == "json":
         resp = {"text": full_text}
-        if corrected_segments:
-            resp["corrected_segments"] = corrected_segments
+        if corrected_groups:
+            resp["corrected_groups"] = corrected_groups
         output = json.dumps(resp, ensure_ascii=False)
     elif fmt == "verbose_json":
         resp = {
@@ -990,13 +1064,13 @@ def transcribe_cli(
                 for s in seg_list
             ],
         }
-        if corrected_segments:
-            resp["corrected_segments"] = corrected_segments
+        if corrected_groups:
+            resp["corrected_groups"] = corrected_groups
         output = json.dumps(resp, ensure_ascii=False, indent=2)
     else:  # text (default)
         output = full_text
-        if corrected_segments:
-            output += "\n\n--- Corrected ---\n" + str(corrected_segments)
+        if corrected_groups:
+            output += "\n\n--- Corrected ---\n" + json.dumps(corrected_groups, ensure_ascii=False, indent=2)
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:
