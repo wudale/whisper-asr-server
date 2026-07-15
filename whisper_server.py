@@ -646,18 +646,26 @@ function renderResult(data, elapsed) {
   html += `<div class="text">${data.text||I18N[currentLang].no_speech}</div>`;
   html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration?data.duration.toFixed(1)+'s':''}</div>`;
 
-  if (data.corrected_text) {
-    html += '<div style="margin-top:12px;padding:14px;border-left:3px solid var(--green);background:#1e2e1e;border-radius:8px;">';
-    html += `<div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px;">✓ ${I18N[currentLang].corrected_label}</div>`;
-    html += `<div style="font-size:16px;line-height:1.7;white-space:pre-wrap;">${data.corrected_text}</div>`;
-    html += '</div>';
+  if (data.corrected_segments) {
+    const correctedText = data.corrected_segments.map(cs => cs.corrected || cs.original).filter(Boolean).join(' ');
+    if (correctedText) {
+      html += '<div style="margin-top:12px;padding:14px;border-left:3px solid var(--green);background:#1e2e1e;border-radius:8px;">';
+      html += `<div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px;">✓ ${I18N[currentLang].corrected_label}</div>`;
+      html += `<div style="font-size:16px;line-height:1.7;white-space:pre-wrap;">${correctedText}</div>`;
+      html += '</div>';
+    }
   }
 
   if (data.segments && data.segments.length) {
     html += '<div class="segments">';
-    for (const seg of data.segments) {
+    for (let i = 0; i < data.segments.length; i++) {
+      const seg = data.segments[i];
       const ts = seg.start.toFixed(1)+'s - '+seg.end.toFixed(1)+'s';
-      html += `<div class="seg"><div class="ts">${ts}</div><div class="txt">${seg.text}</div></div>`;
+      let segHtml = `<div class="seg"><div class="ts">${ts}</div><div class="txt">${seg.text}</div></div>`;
+      if (data.corrected_segments && data.corrected_segments[i] && data.corrected_segments[i].corrected) {
+        segHtml += `<div class="seg" style="border-left:2px solid var(--green);padding-left:12px;color:var(--green);font-size:13px;">${data.corrected_segments[i].corrected}</div>`;
+      }
+      html += segHtml;
     }
     html += '</div>';
   }
@@ -794,24 +802,38 @@ async def transcribe(
                  f" — lang={info.language}({info.language_probability:.2f})"
                  f" — {len(seg_list)} segments")
 
-        # ── LLM Correction ────────────────────────────────────────────
-        corrected_text: str | None = None
+                # ── LLM Correction (per-segment) ───────────────────────────────
+        corrected_segments: list[dict] | None = None
         correction = None
         if correct:
             if LLM_MODEL:
-                corrected_text = await llm_correct(full_text, info.language)
-                if corrected_text:
+                corrected_segments = []
+                for seg in seg_list:
+                    seg_corrected = await llm_correct(seg.text.strip(), info.language)
+                    if seg_corrected:
+                        corrected_segments.append({
+                            "id": seg.id,
+                            "original": seg.text.strip(),
+                            "corrected": seg_corrected,
+                        })
+                    else:
+                        corrected_segments.append({
+                            "id": seg.id,
+                            "original": seg.text.strip(),
+                            "corrected": None,
+                        })
+                if any(cs["corrected"] for cs in corrected_segments):
                     correction = "completed"
                 else:
                     correction = "failed"
             else:
                 correction = "skipped (LLM_MODEL not configured)"
 
-        # ── Build response ────────────────────────────────────────────
+        # ── Build response ────────────────────────────────────────────# ── Build response ────────────────────────────────────────────
         if response_format == "text":
             resp = {"text": full_text}
-            if corrected_text:
-                resp["corrected_text"] = corrected_text
+            if corrected_segments:
+                resp["corrected_segments"] = corrected_segments
             if correction:
                 resp["correction"] = correction
             return JSONResponse(resp)
@@ -824,8 +846,8 @@ async def transcribe(
                 srt_lines.append(seg.text.strip())
                 srt_lines.append("")
             resp = {"text": "\n".join(srt_lines)}
-            if corrected_text:
-                resp["corrected_text"] = corrected_text
+            if corrected_segments:
+                resp["corrected_segments"] = corrected_segments
             if correction:
                 resp["correction"] = correction
             return JSONResponse(resp)
@@ -847,16 +869,16 @@ async def transcribe(
                     for s in seg_list
                 ],
             }
-            if corrected_text:
-                resp["corrected_text"] = corrected_text
+            if corrected_segments:
+                resp["corrected_segments"] = corrected_segments
             if correction:
                 resp["correction"] = correction
             return resp
 
         # Default: "json"
         resp = {"text": full_text}
-        if corrected_text:
-            resp["corrected_text"] = corrected_text
+        if corrected_segments:
+            resp["corrected_segments"] = corrected_segments
         if correction:
             resp["correction"] = correction
         return resp
@@ -918,18 +940,31 @@ def transcribe_cli(
              f" — {info.language}({info.language_probability:.2f}) — {len(seg_list)} segments")
 
     # ── LLM Correction (CLI) ────────────────────────────────────────
-    correct_text_output = None
+    corrected_segments = None
+    correction = None
     if correct:
-        log.info(f"LLM correction enabled, sending to {LLM_MODEL}...")
-        try:
-            correct_text_output = asyncio.run(llm_correct(full_text, info.language))
-        except RuntimeError:
-            # If already in event loop (e.g. some environments)
-            loop = asyncio.new_event_loop()
-            correct_text_output = loop.run_until_complete(llm_correct(full_text, info.language))
-            loop.close()
-        if correct_text_output:
-            log.info("LLM correction done ✅")
+        if LLM_MODEL:
+            log.info(f"LLM correction enabled, correcting {len(seg_list)} segments...")
+            corrected_segments = []
+            for seg in seg_list:
+                try:
+                    seg_corrected = asyncio.run(llm_correct(seg.text.strip(), info.language))
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    seg_corrected = loop.run_until_complete(llm_correct(seg.text.strip(), info.language))
+                    loop.close()
+                corrected_segments.append({
+                    "id": seg.id,
+                    "original": seg.text.strip(),
+                    "corrected": seg_corrected,
+                })
+            if any(cs["corrected"] for cs in corrected_segments):
+                correction = "completed"
+                log.info("LLM correction done ✅")
+            else:
+                correction = "failed"
+        else:
+            correction = "skipped (LLM_MODEL not configured)"
 
     if fmt == "srt":
         lines = []
@@ -941,8 +976,8 @@ def transcribe_cli(
         output = "\n".join(lines)
     elif fmt == "json":
         resp = {"text": full_text}
-        if correct_text_output:
-            resp["corrected_text"] = correct_text_output
+        if corrected_segments:
+            resp["corrected_segments"] = corrected_segments
         output = json.dumps(resp, ensure_ascii=False)
     elif fmt == "verbose_json":
         resp = {
@@ -955,13 +990,13 @@ def transcribe_cli(
                 for s in seg_list
             ],
         }
-        if correct_text_output:
-            resp["corrected_text"] = correct_text_output
+        if corrected_segments:
+            resp["corrected_segments"] = corrected_segments
         output = json.dumps(resp, ensure_ascii=False, indent=2)
     else:  # text (default)
         output = full_text
-        if correct_text_output:
-            output += "\n\n--- Corrected ---\n" + correct_text_output
+        if corrected_segments:
+            output += "\n\n--- Corrected ---\n" + str(corrected_segments)
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:
