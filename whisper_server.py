@@ -806,18 +806,21 @@ async def transcribe(
                  f" — lang={info.language}({info.language_probability:.2f})"
                  f" — {len(seg_list)} segments")
 
-                        # ── LLM Correction (time-gap groups) ──────────────────────────
+        # ── LLM Correction (time-gap groups, backfilled to segments) ──
         corrected_groups: list[dict] | None = None
         correction = None
+        corrected_seg_list: list[dict] | None = None
         if correct:
             if LLM_MODEL:
                 groups = group_segments(seg_list, CORRECTION_GAP)
                 log.info(f"LLM correction: {len(groups)} group(s) from {len(seg_list)} "
                          f"segments (gap≥{CORRECTION_GAP}s)")
                 corrected_groups = []
+                corrected_group_texts: dict[int, str | None] = {}
                 all_ok = True
                 for g in groups:
                     corrected = await llm_correct(g["original"], info.language)
+                    corrected_group_texts[g["id"]] = corrected
                     corrected_groups.append({
                         "id": g["id"],
                         "start": g["start"],
@@ -828,8 +831,14 @@ async def transcribe(
                     })
                     if not corrected:
                         all_ok = False
-                if all_ok:
+                # Backfill corrections to individual segments
+                corrected_seg_list = split_corrected_to_segments(
+                    seg_list, groups, corrected_group_texts
+                )
+                if all_ok and any(cg["corrected"] for cg in corrected_groups if cg["corrected"]):
                     correction = "completed"
+                elif all_ok:
+                    correction = "completed (no changes)"
                 else:
                     correction = "completed with partial failures"
             else:
@@ -838,24 +847,26 @@ async def transcribe(
         # ── Build response ────────────────────────────────────────────
         if response_format == "text":
             resp = {"text": full_text}
-            if corrected_groups:
-                resp["corrected_groups"] = corrected_groups
             if correction:
                 resp["correction"] = correction
+            if corrected_seg_list:
+                resp["segments"] = corrected_seg_list
+            if corrected_groups:
+                resp["corrected_groups"] = corrected_groups
             return JSONResponse(resp)
 
         if response_format == "srt":
             srt_lines = []
-            for i, seg in enumerate(seg_list, 1):
-                srt_lines.append(str(i))
-                srt_lines.append(f"{_fmt_srt(seg.start)} --> {_fmt_srt(seg.end)}")
-                srt_lines.append(seg.text.strip())
+            for seg in (corrected_seg_list or seg_list):
+                srt_lines.append(str(seg.id))
+                srt_lines.append(f"{_fmt_srt(seg.start)} --> {_fmt_srt(seg.end)}" if hasattr(seg, 'start') else "")
+                srt_lines.append(seg.get("text", seg.text.strip()) if isinstance(seg, dict) else seg.text.strip())
                 srt_lines.append("")
             resp = {"text": "\n".join(srt_lines)}
-            if corrected_groups:
-                resp["corrected_groups"] = corrected_groups
             if correction:
                 resp["correction"] = correction
+            if corrected_groups:
+                resp["corrected_groups"] = corrected_groups
             return JSONResponse(resp)
 
         if response_format == "verbose_json":
@@ -863,7 +874,7 @@ async def transcribe(
                 "text": full_text,
                 "language": info.language,
                 "duration": info.duration,
-                "segments": [
+                "segments": corrected_seg_list or [
                     {
                         "id": s.id,
                         "start": round(s.start, 2),
@@ -875,18 +886,20 @@ async def transcribe(
                     for s in seg_list
                 ],
             }
-            if corrected_groups:
-                resp["corrected_groups"] = corrected_groups
             if correction:
                 resp["correction"] = correction
+            if corrected_groups:
+                resp["corrected_groups"] = corrected_groups
             return resp
 
         # Default: "json"
         resp = {"text": full_text}
-        if corrected_groups:
-            resp["corrected_groups"] = corrected_groups
         if correction:
             resp["correction"] = correction
+        if corrected_seg_list:
+            resp["segments"] = corrected_seg_list
+        if corrected_groups:
+            resp["corrected_groups"] = corrected_groups
         return resp
 
     except Exception as e:
@@ -966,6 +979,63 @@ def group_segments(
 
     return groups
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Split corrected text across segments by word count proportion
+# ═══════════════════════════════════════════════════════════════════════════
+def split_corrected_to_segments(
+    seg_list: list,
+    groups: list[dict],
+    corrected_group_texts: dict[int, str | None],
+) -> list[dict]:
+    """Map group-level corrected text back to individual segments."""
+    seg_to_group: dict[int, int] = {}
+    for g in groups:
+        for sid in g["seg_ids"]:
+            seg_to_group[sid] = g["id"]
+
+    group_word_counts: dict[int, list[tuple[int, int]]] = {}
+    for g in groups:
+        counts = []
+        for sid in g["seg_ids"]:
+            s = next(s for s in seg_list if s.id == sid)
+            wc = len(s.text.strip().split()) or 1
+            counts.append((sid, wc))
+        group_word_counts[g["id"]] = counts
+
+    result = []
+    for seg in seg_list:
+        seg_dict = {
+            "id": seg.id,
+            "start": round(seg.start, 2),
+            "end": round(seg.end, 2),
+            "text": seg.text.strip(),
+            "avg_logprob": round(seg.avg_logprob, 4),
+            "no_speech_prob": round(seg.no_speech_prob, 4),
+        }
+        gid = seg_to_group.get(seg.id)
+        if gid and corrected_group_texts.get(gid):
+            group_corrected = corrected_group_texts[gid]
+            counts = group_word_counts[gid]
+            if len(counts) == 1:
+                seg_dict["corrected_text"] = group_corrected
+            else:
+                group_words = group_corrected.split()
+                total = sum(c[1] for c in counts) or 1
+                pos = 0
+                for sid, wc in counts:
+                    ratio = wc / total
+                    n = max(1, round(len(group_words) * ratio))
+                    if sid == seg.id:
+                        seg_dict["corrected_text"] = " ".join(group_words[pos:pos + n])
+                        break
+                    pos += n
+        result.append(seg_dict)
+
+    return result
+
+
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1010,12 +1080,14 @@ def transcribe_cli(
 
     # ── LLM Correction (CLI) ────────────────────────────────────────
     corrected_groups = None
+    corrected_seg_list = None
     correction = None
     if correct:
         if LLM_MODEL:
             groups = group_segments(seg_list, CORRECTION_GAP)
             log.info(f"LLM correction: {len(groups)} group(s) from {len(seg_list)} segments")
             corrected_groups = []
+            corrected_group_texts = {}
             all_ok = True
             for g in groups:
                 try:
@@ -1024,6 +1096,7 @@ def transcribe_cli(
                     loop = asyncio.new_event_loop()
                     seg_corrected = loop.run_until_complete(llm_correct(g["original"], info.language))
                     loop.close()
+                corrected_group_texts[g["id"]] = seg_corrected
                 corrected_groups.append({
                     "id": g["id"],
                     "start": g["start"],
@@ -1034,7 +1107,10 @@ def transcribe_cli(
                 })
                 if not seg_corrected:
                     all_ok = False
-            if all_ok and any(cg['corrected'] for cg in corrected_groups):
+            corrected_seg_list = split_corrected_to_segments(
+                seg_list, groups, corrected_group_texts
+            )
+            if all_ok and any(cg.get('corrected') for cg in corrected_groups):
                 correction = "completed"
                 log.info("LLM correction done")
             elif all_ok:
