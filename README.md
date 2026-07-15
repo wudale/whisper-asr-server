@@ -165,10 +165,12 @@ Improve transcription quality by passing results through an LLM for grammar/accu
 ### Configuration
 
 | Env Variable | Default | Description |
-|---|---|---|
+|---|---|---|---|
+| `LLM_MODEL` | *(empty)* | **Required**. Model name (e.g. `gpt-4o-mini`, `deepseek-chat`). Leave empty to disable correction entirely |
 | `LLM_API_KEY` | — | API key (OpenAI / DeepSeek / Qwen / Ollama etc.) |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
-| `LLM_MODEL` | `gpt-4o-mini` | Model name |
+
+> ⚠️ Correction is **disabled** until `LLM_MODEL` is set. When disabled, `correct=true` API parameters are silently ignored.
 
 ### Usage
 

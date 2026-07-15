@@ -41,11 +41,10 @@ COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "int8")
 HOST = os.getenv("WHISPER_HOST", "0.0.0.0")
 PORT = int(os.getenv("WHISPER_PORT", "9080"))
 
-# LLM Correction Config
+# LLM Correction Config (leave LLM_MODEL empty to disable)
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-LLM_ENABLED = os.getenv("LLM_ENABLED", "").lower() == "true"
+LLM_MODEL = os.getenv("LLM_MODEL", "")
 
 # ── Globals ──────────────────────────────────────────────────────────────
 model: Optional[WhisperModel] = None
@@ -619,11 +618,9 @@ function renderResult(data, elapsed) {
 # LLM Correction
 # ═══════════════════════════════════════════════════════════════════════════
 async def llm_correct(text: str, language: str | None = None) -> str | None:
-    """Send transcription text to LLM for correction. Returns corrected text or None."""
-    if not LLM_API_KEY and not LLM_ENABLED:
-        return None
-
-    if not LLM_API_KEY:
+    """Send transcription text to LLM for correction. Returns corrected text or None.
+    Disabled entirely unless LLM_MODEL is set in environment."""
+    if not LLM_MODEL:
         return None
 
     lang_hint = f" in {language}" if language else ""
