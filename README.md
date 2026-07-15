@@ -127,6 +127,15 @@ const r = await fetch("http://<your-server>:9080/v1/audio/transcriptions",
 console.log((await r.json()).text);
 ```
 
+**With LLM Correction (all languages):**
+```bash
+# Add correct=true to enable LLM post-processing
+curl -X POST http://localhost:9080/v1/audio/transcriptions \
+  -F "file=@recording.mp3" -F "correct=true" \
+  -F "response_format=verbose_json"
+# Response: { text, corrected_text, language, segments }
+```
+
 **Java (OkHttp)**
 ```java
 RequestBody body = new MultipartBody.Builder()
