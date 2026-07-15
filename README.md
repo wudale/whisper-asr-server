@@ -285,6 +285,29 @@ curl -X POST http://localhost:9080/v1/audio/transcriptions \
   -F "response_format=verbose_json"
 ```
 
+## 🤖 For AI Agents
+
+This service exposes a standard REST API. Any AI coding assistant (Claude Code, Codex, Cursor, etc.) can call it directly:
+
+```bash
+# Transcribe an audio file
+curl -X POST http://<server>:9080/v1/audio/transcriptions \
+  -F "file=@audio.mp3"
+
+# With language hint and detailed output
+curl -X POST http://<server>:9080/v1/audio/transcriptions \
+  -F "file=@audio.mp3" -F "language=zh" \
+  -F "response_format=verbose_json"
+
+# With LLM correction enabled (requires LLM_MODEL env)
+curl -X POST http://<server>:9080/v1/audio/transcriptions \
+  -F "file=@audio.mp3" -F "correct=true"
+```
+
+**Response fields:** `text`, `language`, `duration`, `segments[{id, start, end, text, group_id, corrected_text}]`, `correction`
+
+Health check: `GET /health` → `{status, model, device, compute_type}`
+
 ## 📋 Requirements
 
 | OS | Engine | Python | Notes |
