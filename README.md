@@ -178,8 +178,13 @@ Improve transcription quality by passing results through an LLM for grammar/accu
 | `LLM_MODEL` | *(empty)* | **Required**. Model name (e.g. `gpt-4o-mini`, `deepseek-chat`). Leave empty to disable correction entirely |
 | `LLM_API_KEY` | — | API key (OpenAI / DeepSeek / Qwen / Ollama etc.) |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `CORRECTION_GAP` | `2.0` | Silence gap (seconds) to split correction groups. Larger = fewer groups, less context fragmentation |
 
 > ⚠️ Correction is **disabled** until `LLM_MODEL` is set. When disabled, `correct=true` API parameters are silently ignored.
+
+### How Grouping Works
+
+Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTION_GAP` seconds form one group and are sent to the LLM in a single call — keeping conversational context intact while minimizing API calls.
 
 ### Usage
 
