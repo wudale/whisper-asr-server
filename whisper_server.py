@@ -46,7 +46,6 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 CORRECTION_GAP = float(os.getenv("CORRECTION_GAP", "2.0"))
-CORRECTION_CONFIDENCE = float(os.getenv("CORRECTION_CONFIDENCE", "-0.5"))
 
 # ── Globals ──────────────────────────────────────────────────────────────
 model: Optional[WhisperModel] = None
@@ -651,24 +650,14 @@ function renderResult(data, elapsed) {
   html += `<div class="text">${data.text||I18N[currentLang].no_speech}</div>`;
   html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration?data.duration.toFixed(1)+'s':''}</div>`;
 
-  if (data.corrected_groups) {
-    const correctedText = data.corrected_groups.map(cs => cs.corrected || cs.original).filter(Boolean).join(' ');
-    if (correctedText) {
-      html += '<div style="margin-top:12px;padding:14px;border-left:3px solid var(--green);background:#1e2e1e;border-radius:8px;">';
-      html += `<div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px;">✓ ${I18N[currentLang].corrected_label}</div>`;
-      html += `<div style="font-size:16px;line-height:1.7;white-space:pre-wrap;">${correctedText}</div>`;
-      html += '</div>';
-    }
-  }
-
   if (data.segments && data.segments.length) {
     html += '<div class="segments">';
     for (let i = 0; i < data.segments.length; i++) {
       const seg = data.segments[i];
       const ts = seg.start.toFixed(1)+'s - '+seg.end.toFixed(1)+'s';
-      let segHtml = `<div class="seg"><div class="ts">${ts}</div><div class="txt">${seg.text}</div></div>`;
-      if (data.corrected_groups && data.corrected_groups[i] && data.corrected_groups[i].corrected) {
-        segHtml += `<div class="seg" style="border-left:2px solid var(--green);padding-left:12px;color:var(--green);font-size:13px;">${data.corrected_groups[i].corrected}</div>`;
+      let segHtml = `<div class="seg"><div class="ts">${ts}${seg.group_id ? ' [G'+seg.group_id+']' : ''}</div><div class="txt">${seg.text}</div></div>`;
+      if (seg.corrected_text) {
+        segHtml += `<div class="seg" style="border-left:2px solid var(--green);padding-left:12px;color:var(--green);font-size:13px;">${seg.corrected_text}</div>`;
       }
       html += segHtml;
     }
@@ -737,6 +726,78 @@ async def llm_correct(text: str, language: str | None = None) -> str | None:
         return None
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LLM Correction — batch per group, returns per-segment corrected texts
+# ═══════════════════════════════════════════════════════════════════════════
+async def llm_correct_group(
+    seg_texts: list[tuple[int, str]],
+    language: str | None = None,
+) -> list[str | None]:
+    """Send a group of segments to LLM for correction. Returns corrected texts,
+    one per segment, preserving the order of seg_texts.
+
+    The LLM receives numbered segments and is asked to correct each independently.
+    Response is parsed to extract per-segment corrections.
+    """
+    if not LLM_API_KEY:
+        return [None] * len(seg_texts)
+
+    lang_hint = f" in {language}" if language else ""
+    lines = "\n".join(f"[{sid}] {text}" for sid, text in seg_texts)
+    prompt = (
+        f"Correct the following speech-to-text segments{lang_hint}.\n"
+        f"Fix transcription errors, grammar, and punctuation.\n"
+        f"Preserve the original meaning and style.\n"
+        f"Return each corrected segment on its own line with its number.\n"
+        f"Do NOT merge or split segments. Keep exactly {len(seg_texts)} output lines.\n\n"
+        f"{lines}\n\n"
+        f"Corrected:\n"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                f"{LLM_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {LLM_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": LLM_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                },
+            )
+            r.raise_for_status()
+            reply = r.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        log.warning(f"LLM group correction failed: {e}")
+        return [None] * len(seg_texts)
+
+    # Parse response: look for [N] prefix lines
+    import re
+    results: list[str | None] = [None] * len(seg_texts)
+    for line in reply.split("\n"):
+        m = re.match(r'\s*\[(\d+)\]\s*(.*)', line)
+        if m:
+            sid = int(m.group(1))
+            text = m.group(2).strip()
+            # Find position in our seg_texts by sid
+            for i, (oid, _) in enumerate(seg_texts):
+                if oid == sid:
+                    results[i] = text
+                    break
+
+    # If no structured output was parsed, fall back: treat whole response as single correction
+    if all(r is None for r in results):
+        log.warning("LLM response not structured, falling back to single correction")
+        return [reply] * len(seg_texts)
+
+    log.info(f"LLM group correction done — {sum(1 for r in results if r)}/{len(results)} segments corrected")
+    return results
+
+
 # ── Health ───────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
@@ -790,9 +851,9 @@ async def transcribe(
             tmp_path,
             language=language,
             beam_size=5,
-            vad_filter=True,
+            vad_filter=False,
             vad_parameters=dict(
-                min_silence_duration_ms=500,
+                min_silence_duration_ms=200,
                 speech_pad_ms=400,
             ),
         )
@@ -808,7 +869,6 @@ async def transcribe(
                  f" — {len(seg_list)} segments")
 
         # ── LLM Correction (time-gap groups, backfilled to segments) ──
-        corrected_groups: list[dict] | None = None
         correction = None
         corrected_seg_list: list[dict] | None = None
         if correct:
@@ -816,44 +876,20 @@ async def transcribe(
                 groups = group_segments(seg_list, CORRECTION_GAP)
                 log.info(f"LLM correction: {len(groups)} group(s) from {len(seg_list)} "
                          f"segments (gap≥{CORRECTION_GAP}s)")
-                corrected_groups = []
                 corrected_group_texts: dict[int, str | None] = {}
                 all_ok = True
                 for g in groups:
-                    # Skip LLM if all segments in this group have high confidence
-                    group_segs = [s for s in seg_list if s.id in g["seg_ids"]]
-                    high_conf = all(
-                        s.avg_logprob > CORRECTION_CONFIDENCE for s in group_segs
-                    )
-                    skip_reason = None
-                    if high_conf:
-                        skip_reason = f"high confidence (avg_logprob>{CORRECTION_CONFIDENCE})"
-                        corrected = None
-                        all_ok = True
-                    else:
-                        corrected = await llm_correct(g["original"], info.language)
-                        if not corrected:
-                            all_ok = False
-                    corrected_group_texts[g["id"]] = corrected
-                    corrected_groups.append({
-                        "id": g["id"],
-                        "start": g["start"],
-                        "end": g["end"],
-                        "original": g["original"],
-                        "corrected": corrected,
-                        "seg_ids": g["seg_ids"],
-                        "skip_reason": skip_reason,
-                    })
+                    seg_texts = [(s.id, s.text.strip()) for s in seg_list if s.id in g["seg_ids"]]
+                    results = await llm_correct_group(seg_texts, info.language)
+                    for i, sid in enumerate(g["seg_ids"]):
+                        corrected_group_texts[sid] = results[i] if i < len(results) else None
+                    if not any(r for r in results if r):
+                        all_ok = False
                 # Backfill corrections to individual segments
                 corrected_seg_list = split_corrected_to_segments(
                     seg_list, groups, corrected_group_texts
                 )
-                if all_ok and any(cg["corrected"] for cg in corrected_groups if cg["corrected"]):
-                    correction = "completed"
-                elif all_ok:
-                    correction = "completed (no changes)"
-                else:
-                    correction = "completed with partial failures"
+                correction = "completed"
             else:
                 correction = "skipped (LLM_MODEL not configured)"
 
@@ -864,8 +900,6 @@ async def transcribe(
                 resp["correction"] = correction
             if corrected_seg_list:
                 resp["segments"] = corrected_seg_list
-            if corrected_groups:
-                resp["corrected_groups"] = corrected_groups
             return JSONResponse(resp)
 
         if response_format == "srt":
@@ -878,8 +912,6 @@ async def transcribe(
             resp = {"text": "\n".join(srt_lines)}
             if correction:
                 resp["correction"] = correction
-            if corrected_groups:
-                resp["corrected_groups"] = corrected_groups
             return JSONResponse(resp)
 
         if response_format == "verbose_json":
@@ -893,16 +925,13 @@ async def transcribe(
                         "start": round(s.start, 2),
                         "end": round(s.end, 2),
                         "text": s.text.strip(),
-                        "avg_logprob": round(s.avg_logprob, 4),
-                        "no_speech_prob": round(s.no_speech_prob, 4),
+                        "group_id": None,
                     }
                     for s in seg_list
                 ],
             }
             if correction:
                 resp["correction"] = correction
-            if corrected_groups:
-                resp["corrected_groups"] = corrected_groups
             return resp
 
         # Default: "json"
@@ -911,8 +940,6 @@ async def transcribe(
             resp["correction"] = correction
         if corrected_seg_list:
             resp["segments"] = corrected_seg_list
-        if corrected_groups:
-            resp["corrected_groups"] = corrected_groups
         return resp
 
     except Exception as e:
@@ -1000,40 +1027,13 @@ def split_corrected_to_segments(
     groups: list[dict],
     corrected_group_texts: dict[int, str | None],
 ) -> list[dict]:
-    """Map group-level corrected text back to individual segments."""
-    # Step 1: per-group, pre-compute each segment's slice of corrected text
-    seg_corrected: dict[int, str | None] = {}
+    """Attach per-segment corrected_text and group_id from the LLM correction."""
+    # Build seg_id -> group_id mapping
+    seg_group: dict[int, int] = {}
     for g in groups:
-        corrected = corrected_group_texts.get(g["id"])
-        if not corrected:
-            for sid in g["seg_ids"]:
-                seg_corrected[sid] = None
-            continue
+        for sid in g["seg_ids"]:
+            seg_group[sid] = g["id"]
 
-        sids = g["seg_ids"]
-        if len(sids) == 1:
-            seg_corrected[sids[0]] = corrected
-            continue
-
-        # Multiple segments: split corrected text proportionally
-        words = corrected.split()
-        orig_sizes = []
-        for sid in sids:
-            s = next(x for x in seg_list if x.id == sid)
-            orig_sizes.append(max(1, len(s.text.strip().split())))
-        total = sum(orig_sizes)
-        start = 0
-        for i, sid in enumerate(sids):
-            ratio = orig_sizes[i] / total
-            n = max(1, round(len(words) * ratio))
-            if i == len(sids) - 1:
-                # Last segment gets remaining words
-                seg_corrected[sid] = " ".join(words[start:])
-            else:
-                seg_corrected[sid] = " ".join(words[start:start + n])
-                start += n
-
-    # Step 2: build segment dicts with pre-computed corrected_text
     result = []
     for seg in seg_list:
         seg_dict = {
@@ -1041,14 +1041,12 @@ def split_corrected_to_segments(
             "start": round(seg.start, 2),
             "end": round(seg.end, 2),
             "text": seg.text.strip(),
-            "avg_logprob": round(seg.avg_logprob, 4),
-            "no_speech_prob": round(seg.no_speech_prob, 4),
+            "group_id": seg_group.get(seg.id),
         }
-        ct = seg_corrected.get(seg.id)
+        ct = corrected_group_texts.get(seg.id)
         if ct:
             seg_dict["corrected_text"] = ct
         result.append(seg_dict)
-
     return result
 
 
@@ -1086,8 +1084,8 @@ def transcribe_cli(
         audio_path,
         language=language,
         beam_size=5,
-        vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=400),
+        vad_filter=False,
+        vad_parameters=dict(min_silence_duration_ms=200, speech_pad_ms=400),
     )
     seg_list = list(segments)
     full_text = " ".join(s.text.strip() for s in seg_list)
@@ -1097,56 +1095,29 @@ def transcribe_cli(
              f" — {info.language}({info.language_probability:.2f}) — {len(seg_list)} segments")
 
     # ── LLM Correction (CLI) ────────────────────────────────────────
-    corrected_groups = None
     corrected_seg_list = None
     correction = None
     if correct:
         if LLM_MODEL:
             groups = group_segments(seg_list, CORRECTION_GAP)
             log.info(f"LLM correction: {len(groups)} group(s) from {len(seg_list)} segments")
-            corrected_groups = []
             corrected_group_texts = {}
             all_ok = True
             for g in groups:
-                # Skip LLM if all segments in this group have high confidence
-                group_segs = [s for s in seg_list if s.id in g["seg_ids"]]
-                high_conf = all(
-                    s.avg_logprob > CORRECTION_CONFIDENCE for s in group_segs
-                )
-                skip_reason = None
-                if high_conf:
-                    skip_reason = f"high confidence (avg_logprob>{CORRECTION_CONFIDENCE})"
-                    seg_corrected = None
-                    all_ok = True
-                else:
-                    try:
-                        seg_corrected = asyncio.run(llm_correct(g["original"], info.language))
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        seg_corrected = loop.run_until_complete(llm_correct(g["original"], info.language))
-                        loop.close()
-                    if not seg_corrected:
-                        all_ok = False
-                corrected_group_texts[g["id"]] = seg_corrected
-                corrected_groups.append({
-                    "id": g["id"],
-                    "start": g["start"],
-                    "end": g["end"],
-                    "original": g["original"],
-                    "corrected": seg_corrected,
-                    "seg_ids": g["seg_ids"],
-                    "skip_reason": skip_reason,
-                })
+                seg_texts = [(s.id, s.text.strip()) for s in seg_list if s.id in g["seg_ids"]]
+                try:
+                    results = asyncio.run(llm_correct_group(seg_texts, info.language))
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    results = loop.run_until_complete(llm_correct_group(seg_texts, info.language))
+                    loop.close()
+                for i, sid in enumerate(g["seg_ids"]):
+                    corrected_group_texts[sid] = results[i] if i < len(results) else None
+                if not any(r for r in results if r):
+                    all_ok = False
             corrected_seg_list = split_corrected_to_segments(
                 seg_list, groups, corrected_group_texts
             )
-            if all_ok and any(cg.get('corrected') for cg in corrected_groups if cg.get('corrected')):
-                correction = "completed"
-                log.info("LLM correction done")
-            elif all_ok:
-                correction = "completed with partial failures"
-            else:
-                correction = "failed"
         else:
             correction = "skipped (LLM_MODEL not configured)"
     if fmt == "srt":
@@ -1159,8 +1130,6 @@ def transcribe_cli(
         output = "\n".join(lines)
     elif fmt == "json":
         resp = {"text": full_text}
-        if corrected_groups:
-            resp["corrected_groups"] = corrected_groups
         output = json.dumps(resp, ensure_ascii=False)
     elif fmt == "verbose_json":
         resp = {
@@ -1169,17 +1138,13 @@ def transcribe_cli(
             "duration": info.duration,
             "segments": [
                 {"id": s.id, "start": round(s.start, 2), "end": round(s.end, 2),
-                 "text": s.text.strip(), "avg_logprob": round(s.avg_logprob, 4)}
+                 "text": s.text.strip(), "group_id": None}
                 for s in seg_list
             ],
         }
-        if corrected_groups:
-            resp["corrected_groups"] = corrected_groups
         output = json.dumps(resp, ensure_ascii=False, indent=2)
     else:  # text (default)
         output = full_text
-        if corrected_groups:
-            output += "\n\n--- Corrected ---\n" + json.dumps(corrected_groups, ensure_ascii=False, indent=2)
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:

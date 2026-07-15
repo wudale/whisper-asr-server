@@ -133,7 +133,7 @@ console.log((await r.json()).text);
 curl -X POST http://localhost:9080/v1/audio/transcriptions \
   -F "file=@recording.mp3" -F "correct=true" \
   -F "response_format=verbose_json"
-# Response: { text, corrected_text, language, segments }
+# Response: { text, language, duration, segments: [{ id, start, end, text, group_id, corrected_text }], correction: "completed" }
 ```
 
 **Java (OkHttp)**
@@ -156,9 +156,13 @@ try (Response r = new OkHttpClient().newCall(
   "text": "Full transcription text",
   "language": "en",
   "duration": 180.0,
-  "segments": [{"id":1, "start":0.0, "end":5.2, "text": "..."}]
+  "segments": [
+    {"id":1, "start":0.0, "end":5.2, "text": "...", "group_id":null, "corrected_text":"..."},
+    {"id":2, "start":5.2, "end":10.8, "text": "...", "group_id":null, "corrected_text":"..."}
+  ]
 }
 ```
+> `corrected_text` is only present when LLM correction is enabled. `group_id` is `null` unless correction grouping is active.
 
 **srt** — import directly into video editors:
 ```
@@ -179,13 +183,10 @@ Improve transcription quality by passing results through an LLM for grammar/accu
 | `LLM_API_KEY` | — | API key (OpenAI / DeepSeek / Qwen / Ollama etc.) |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `CORRECTION_GAP` | `2.0` | Silence gap (seconds) to split correction groups. Larger = fewer groups, less context fragmentation |
-| `CORRECTION_CONFIDENCE` | `-0.5` | Skip LLM correction for groups where all segments have avg_logprob above this threshold. Higher = more groups skipped (faster, cheaper) |
 
 ### How Grouping Works
 
-Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTION_GAP` seconds form one group and are sent to the LLM in a single call — keeping conversational context intact while minimizing API calls.
-
-Groups where all segments have `avg_logprob > CORRECTION_CONFIDENCE` skip the LLM entirely — clear audio costs nothing.
+Segments are grouped by silence gaps. Gaps ≥ `CORRECTION_GAP` seconds split into separate groups. Each group is sent as a batch — the LLM returns per-segment corrections. The `group_id` field in the response identifies which segments belong to the same batch.
 
 > ⚠️ Correction is **disabled** until `LLM_MODEL` is set. When disabled, `correct=true` API parameters are silently ignored.
 
