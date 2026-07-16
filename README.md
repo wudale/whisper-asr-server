@@ -28,6 +28,7 @@
 | 🖥️ **Cross-platform** | Linux (CPU/GPU) + macOS Apple Silicon |
 | 👀 **Dry-run mode** | `--dry-run` shows the plan before executing — beginner-friendly |
 | 🌍 **99+ languages** | Auto-detection for Chinese, English, Japanese, Korean, French, German, Spanish... |
+| ⚡ **Multi-worker** | `WHISPER_WORKERS` / `--workers` for concurrent requests |
 | 📦 **Zero secret leaks** | No hardcoded passwords, IPs, or API keys |
 
 ## 🎯 Who is this for?
@@ -102,6 +103,7 @@ OpenAI Audio Transcription API compatible.
 | `file` | file | ✅ | Audio/video (mp3, wav, m4a, ogg, flac, mp4, mov, etc.) |
 | `language` | string | ❌ | Language code; omit for auto-detection (99+ languages) |
 | `response_format` | string | ❌ | `json` (default), `text`, `srt`, `verbose_json` |
+| `correct` | bool | ❌ | Enable LLM post-correction (requires `LLM_MODEL`)
 
 ### Examples
 
@@ -172,28 +174,60 @@ try (Response r = new OkHttpClient().newCall(
 First segment text
 ```
 
+## ⚙️ Configuration
+
+All settings via environment variables.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WHISPER_MODEL` | `medium` | Model size: `tiny`, `base`, `small`, `medium`, `large-v3-turbo`, `large-v3` |
+| `WHISPER_DEVICE` | `cpu` | Device: `cpu` or `cuda` |
+| `WHISPER_COMPUTE` | `int8` | Quantization: `int8` (CPU), `float16` (GPU), `float32` |
+| `WHISPER_HOST` | `0.0.0.0` | Bind address |
+| `WHISPER_PORT` | `9080` | Listen port |
+| `WHISPER_WORKERS` | `1` | Worker processes for concurrency (CPU-only: max 2–4) |
+| `WHISPER_MAX_FILE_SIZE` | `524288000` | Max upload size in bytes (default 500 MB). Returns `413` if exceeded |
+| `LLM_MODEL` | *(empty)* | LLM model name. Leave empty to disable correction |
+| `LLM_API_KEY` | *(empty)* | API key for your LLM provider |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
+| `CORRECTION_GAP` | `2.0` | Silence gap (seconds) to split correction groups |
+
+### Scaling with Workers
+
+```bash
+# Single worker (default)
+python3 whisper_server.py
+
+# Two workers — doubles throughput at ~2× RAM cost
+# Each worker loads its own model instance (~1 GB for medium int8)
+python3 whisper_server.py --workers 2
+
+# Via env var
+WHISPER_WORKERS=2 python3 whisper_server.py
+```
+
+> ⚠️ Each worker runs in its own process with a separate model instance. On CPU-only servers, limit `WHISPER_WORKERS` to 2–4 depending on available RAM. At 14 GB RAM with medium int8 (~1 GB each), 2 workers leaves ~10 GB for other processes.
+
+### File Size Limit
+
+Uploads larger than `WHISPER_MAX_FILE_SIZE` receive HTTP `413`. Files are read in 64 KB chunks — memory usage stays low regardless of file size.
+
+```bash
+# Allow 1 GB uploads
+WHISPER_MAX_FILE_SIZE=1073741824 python3 whisper_server.py
+```
+
 ## 🤖 LLM Correction (Optional)
 
 Improve transcription quality by passing results through an LLM for grammar/accuracy correction.
 
-### Configuration
-
-| Env Variable | Default | Description |
-|---|---|---|---|
-| `LLM_MODEL` | *(empty)* | **Required**. Model name (e.g. `gpt-4o-mini`, `deepseek-chat`). Leave empty to disable correction entirely |
-| `LLM_API_KEY` | — | API key (OpenAI / DeepSeek / Qwen / Ollama etc.) |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
-| `CORRECTION_GAP` | `2.0` | Silence gap (seconds) to split correction groups. Larger = fewer groups, less context fragmentation |
+See [Configuration](#%EF%B8%8F-configuration) above for the full env var reference. The key variables are `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`, and `CORRECTION_GAP`.
 
 ### How Grouping Works
 
-Segments are grouped by silence gaps. Gaps ≥ `CORRECTION_GAP` seconds split into separate groups. Each group is sent as a batch — the LLM returns per-segment corrections. The `group_id` field in the response identifies which segments belong to the same batch.
+Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTION_GAP` seconds form one group and are sent to the LLM in a single call — keeping conversational context intact while minimizing API calls. The `group_id` field in the response identifies which segments belong to the same batch.
 
 > ⚠️ Correction is **disabled** until `LLM_MODEL` is set. When disabled, `correct=true` API parameters are silently ignored.
-
-### How Grouping Works
-
-Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTION_GAP` seconds form one group and are sent to the LLM in a single call — keeping conversational context intact while minimizing API calls.
 
 ### Usage
 
@@ -263,7 +297,9 @@ python3 whisper_server.py --transcribe <file> \
     --language en|zh|ja|ko|... \   # omit for auto-detect
     --format text|json|srt|verbose_json \
     --model tiny|base|small|medium|large-v3 \
-    --output result.txt            # save to file
+    --output result.txt \           # save to file
+    --correct \                     # enable LLM correction
+    --workers 1                     # server mode only (default: 1)
 ```
 
 Pre-recorded samples in 9 languages:
