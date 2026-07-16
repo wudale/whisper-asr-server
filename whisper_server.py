@@ -317,7 +317,7 @@ try (Response r = client.newCall(reqCorrect).execute()) {
   <div class="footer">
     <span data-i18n="footer_prefix">Endpoint:</span> <code>POST /v1/audio/transcriptions</code> · <code>GET /health</code> · <span>Port 9080</span>
     <div style="margin-top:12px;font-size:12px;color:var(--sub);">
-      Hangzhou Wujia Technology Co., Ltd. · <a href="mailto:dale.wdl@qq.com" style="color:var(--accent);text-decoration:none;">dale.wdl@qq.com</a>
+      <a href="https://github.com/wudale/whisper-asr-server" target="_blank" style="color:var(--accent);text-decoration:none;">⭐ GitHub</a> · Hangzhou Wujia Technology Co., Ltd. · <a href="mailto:dale.wdl@qq.com" style="color:var(--accent);text-decoration:none;">dale.wdl@qq.com</a>
     </div>
   </div>
 </div>
