@@ -153,26 +153,34 @@ try (Response r = new OkHttpClient().newCall(
 
 ### Response Formats
 
-**json** (default) — full response with segments, timestamps, language:
+Three output formats, each clean: only contains fields relevant to that format.
+
+**`json`** (default) — full response with segments, timestamps, and language:
 ```json
 {
   "text": "Full transcription text",
   "language": "en",
   "duration": 180.0,
   "segments": [
-    {"id":1, "start":0.0, "end":5.2, "text": "...", "group_id":null, "corrected_text":"..."},
-    {"id":2, "start":5.2, "end":10.8, "text": "...", "group_id":null, "corrected_text":"..."}
+    {"id":1, "start":0.0, "end":5.2, "text": "...", "group_id":null}
   ]
 }
 ```
-> `corrected_text` is only present when LLM correction is enabled. `group_id` is `null` unless correction grouping is active.
+With LLM correction, adds `correction: "completed"` and `corrected_text` on each segment.
 
-**srt** — import directly into video editors:
+**`text`** — plain text, nothing else:
+```json
+{"text": "Full transcription text"}
+```
+With LLM correction, `text` contains the corrected version. No metadata, no segments.
+
+**`srt`** — import directly into video editors:
 ```
 1
 00:00:00,000 --> 00:00:05,200
 First segment text
 ```
+With LLM correction, subtitle lines use corrected text.
 
 ## ⚙️ Configuration
 
@@ -232,19 +240,16 @@ Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTI
 ### Usage
 
 ```bash
-# API: add correct=true
+# Full output with per-segment corrections
+curl -X POST http://localhost:9080/v1/audio/transcriptions \
+  -F "file=@recording.mp3" \
+  -F "correct=true"
+
+# Plain corrected text only (no metadata)
 curl -X POST http://localhost:9080/v1/audio/transcriptions \
   -F "file=@recording.mp3" \
   -F "correct=true" \
-  -F "response_format=json"
-
-# Response includes corrected_text
-{
-  "text": "original transcription...",
-  "corrected_text": "corrected transcription...",
-  "language": "zh",
-  ...
-}
+  -F "response_format=text"
 
 # CLI: add --correct
 python3 whisper_server.py --transcribe recording.mp3 --correct
@@ -342,7 +347,7 @@ curl -X POST http://<server>:9080/v1/audio/transcriptions \
   -F "file=@audio.mp3" -F "correct=true"
 ```
 
-**Response fields:** `text`, `language`, `duration`, `segments[{id, start, end, text, group_id, corrected_text}]`, `correction`
+**Response fields:** `text` (always). JSON format adds `language`, `duration`, `segments[{id, start, end, text, group_id}]`. With correction: `segments[].corrected_text` + `correction` in JSON, or corrected `text` in text/srt.
 
 Health check: `GET /health` → `{status, model, device, compute_type}`
 
