@@ -46,6 +46,8 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 CORRECTION_GAP = float(os.getenv("CORRECTION_GAP", "2.0"))
+MAX_FILE_SIZE = int(os.getenv("WHISPER_MAX_FILE_SIZE", str(500 * 1024 * 1024)))  # 500 MB default
+WORKERS = int(os.getenv("WHISPER_WORKERS", "1"))
 
 # ── Globals ──────────────────────────────────────────────────────────────
 model: Optional[WhisperModel] = None
@@ -689,43 +691,6 @@ function escapeHtml(s) {
 # ═══════════════════════════════════════════════════════════════════════════
 # LLM Correction
 # ═══════════════════════════════════════════════════════════════════════════
-async def llm_correct(text: str, language: str | None = None) -> str | None:
-    """Send transcription text to LLM for correction. Returns corrected text or None.
-    Disabled entirely unless LLM_MODEL is set in environment."""
-    if not LLM_MODEL:
-        return None
-
-    lang_hint = f" in {language}" if language else ""
-    prompt = (
-        f"Correct the following speech-to-text transcription{lang_hint}. "
-        f"Fix transcription errors, grammar, and punctuation. "
-        f"Preserve the original meaning and style. "
-        f"Output only the corrected text, nothing else:\n\n{text}"
-    )
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(
-                f"{LLM_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {LLM_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": LLM_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                },
-            )
-            r.raise_for_status()
-            corrected = r.json()["choices"][0]["message"]["content"].strip()
-            log.info(f"LLM correction done ({LLM_MODEL}) — text reduced by {max(0, len(text)-len(corrected))} chars")
-            return corrected
-    except Exception as e:
-        log.warning(f"LLM correction failed: {e}")
-        return None
-
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # LLM Correction — batch per group, returns per-segment corrected texts
@@ -836,10 +801,24 @@ async def transcribe(
     if ext and ext not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
 
-    # Save uploaded file to temp
+    # Save uploaded file to temp (chunked, with size limit)
     suffix = ext or ".tmp"
+    CHUNK_SIZE = 64 * 1024  # 64 KB
+    total_bytes = 0
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(await file.read())
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > MAX_FILE_SIZE:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large: max {MAX_FILE_SIZE // (1024 * 1024)} MB"
+                )
+            tmp.write(chunk)
         tmp_path = tmp.name
 
     try:
@@ -903,11 +882,12 @@ async def transcribe(
             return JSONResponse(resp)
 
         if response_format == "srt":
+            display_segs = corrected_seg_list or [_seg_to_dict(s) for s in seg_list]
             srt_lines = []
-            for seg in (corrected_seg_list or seg_list):
-                srt_lines.append(str(seg.id))
-                srt_lines.append(f"{_fmt_srt(seg.start)} --> {_fmt_srt(seg.end)}" if hasattr(seg, 'start') else "")
-                srt_lines.append(seg.get("text", seg.text.strip()) if isinstance(seg, dict) else seg.text.strip())
+            for seg in display_segs:
+                srt_lines.append(str(seg["id"]))
+                srt_lines.append(f"{_fmt_srt(seg['start'])} --> {_fmt_srt(seg['end'])}")
+                srt_lines.append(seg.get("text", seg.get("corrected_text", "")))
                 srt_lines.append("")
             resp = {"text": "\n".join(srt_lines)}
             if correction:
@@ -919,16 +899,7 @@ async def transcribe(
                 "text": full_text,
                 "language": info.language,
                 "duration": info.duration,
-                "segments": corrected_seg_list or [
-                    {
-                        "id": s.id,
-                        "start": round(s.start, 2),
-                        "end": round(s.end, 2),
-                        "text": s.text.strip(),
-                        "group_id": None,
-                    }
-                    for s in seg_list
-                ],
+                "segments": corrected_seg_list or [_seg_to_dict(s) for s in seg_list],
             }
             if correction:
                 resp["correction"] = correction
@@ -947,6 +918,19 @@ async def transcribe(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         os.unlink(tmp_path)
+
+
+def _seg_to_dict(seg) -> dict:
+    """Normalize a faster-whisper Segment or existing dict to standard dict format."""
+    if isinstance(seg, dict):
+        return seg
+    return {
+        "id": seg.id,
+        "start": round(seg.start, 2),
+        "end": round(seg.end, 2),
+        "text": seg.text.strip(),
+        "group_id": None,
+    }
 
 
 def _fmt_srt(seconds: float) -> str:
@@ -1164,6 +1148,8 @@ def _parse_main_args():
     p.add_argument("--model", default=None, help=f"Model size (default: {MODEL_SIZE})")
     p.add_argument("--output", default=None, help="Save output to file instead of stdout")
     p.add_argument("--correct", action="store_true", help="Enable LLM correction (requires LLM_API_KEY)")
+    p.add_argument("--workers", type=int, default=WORKERS,
+                    help=f"Number of worker processes (default: {WORKERS})")
     p.add_argument("--host", default=HOST, help=f"Server bind address (default: {HOST})")
     p.add_argument("--port", type=int, default=PORT, help=f"Server port (default: {PORT})")
     return p.parse_args()
@@ -1184,5 +1170,16 @@ if __name__ == "__main__":
         )
     else:
         # Server mode
-        log.info(f"Starting Whisper ASR server on {args.host}:{args.port}")
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        if args.workers > 1:
+            log.info(f"Starting Whisper ASR server on {args.host}:{args.port} "
+                     f"with {args.workers} workers")
+            uvicorn.run(
+                "whisper_server:app",
+                host=args.host,
+                port=args.port,
+                workers=args.workers,
+                log_level="info",
+            )
+        else:
+            log.info(f"Starting Whisper ASR server on {args.host}:{args.port}")
+            uvicorn.run(app, host=args.host, port=args.port, log_level="info")

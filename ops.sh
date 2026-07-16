@@ -337,7 +337,13 @@ service_install_macos() {
     <dict>
         <key>PATH</key><string>$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>WHISPER_MODEL</key><string>$MODEL_SIZE</string>
+        <key>WHISPER_DEVICE</key><string>cpu</string>
+        <key>WHISPER_COMPUTE</key><string>$MODEL_COMPUTE</string>
         <key>WHISPER_PORT</key><string>$SERVICE_PORT</string>
+        <key>LLM_API_KEY</key><string></string>
+        <key>LLM_BASE_URL</key><string>https://api.openai.com/v1</string>
+        <key>LLM_MODEL</key><string></string>
+        <key>CORRECTION_GAP</key><string>2.0</string>
     </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key>
