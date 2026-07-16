@@ -871,11 +871,14 @@ async def transcribe(
 
         # ── Build response ────────────────────────────────────────────
         if response_format == "text":
-            resp = {"text": full_text}
-            if correction:
-                resp["correction"] = correction
             if corrected_seg_list:
-                resp["segments"] = corrected_seg_list
+                corrected_full = " ".join(
+                    seg.get("corrected_text") or seg["text"]
+                    for seg in corrected_seg_list
+                )
+                resp = {"text": corrected_full}
+            else:
+                resp = {"text": full_text}
             return JSONResponse(resp)
 
         if response_format == "srt":
@@ -884,11 +887,9 @@ async def transcribe(
             for seg in display_segs:
                 srt_lines.append(str(seg["id"]))
                 srt_lines.append(f"{_fmt_srt(seg['start'])} --> {_fmt_srt(seg['end'])}")
-                srt_lines.append(seg.get("text", seg.get("corrected_text", "")))
+                srt_lines.append(seg.get("corrected_text") or seg["text"])
                 srt_lines.append("")
             resp = {"text": "\n".join(srt_lines)}
-            if correction:
-                resp["correction"] = correction
             return JSONResponse(resp)
 
         # Default: "json" (also accepts "verbose_json" for backward compat)
