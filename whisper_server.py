@@ -636,11 +636,16 @@ function switchTab(lang) {
 
 function renderResult(data, elapsed) {
   let html = '';
+  const isVerbose = data.duration !== undefined;  // json/srt have duration; text does not
+
   if (data.language) html += `<div class="lang-badge">${data.language}${data.language_probability ? ' · '+Math.round(data.language_probability*100)+'%' : ''}</div>`;
   if (data.correction === 'completed') html += '<span style="display:inline-block;background:var(--green);color:#1e1e2e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-bottom:8px;">✓ LLM corrected</span>';
   if (data.correction && data.correction !== 'completed') html += `<span style="display:inline-block;background:var(--red);color:#1e1e2e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-bottom:8px;">⚠ ${data.correction}</span>`;
   html += `<div class="text">${data.text||I18N[currentLang].no_speech}</div>`;
-  html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration?data.duration.toFixed(1)+'s':''}</div>`;
+
+  if (isVerbose) {
+    html += `<div class="sub" style="font-size:12px;margin-bottom:10px">⏱ ${elapsed}s · ${I18N[currentLang].audio_label} ${data.duration.toFixed(1)}s</div>`;
+  }
 
   if (data.segments && data.segments.length) {
     html += '<div class="segments">';
@@ -656,12 +661,14 @@ function renderResult(data, elapsed) {
     html += '</div>';
   }
 
-  html += '<div style="margin-top:12px;text-align:right;">';
-  html += `<button onclick="toggleRaw()" style="background:none;border:1px solid var(--border);color:var(--sub);padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">📋 ${I18N[currentLang].raw_json}</button>`;
-  html += '</div>';
-  html += '<div id="rawJson" style="display:none;margin-top:8px;background:#11111b;border-radius:8px;padding:14px;overflow-x:auto;font-size:12px;line-height:1.5;max-height:500px;overflow-y:auto;"><pre style="margin:0;color:#cdd6f4;white-space:pre-wrap;word-break:break-all;">';
-  html += escapeHtml(JSON.stringify(data, null, 2));
-  html += '</pre></div>';
+  if (isVerbose) {
+    html += '<div style="margin-top:12px;text-align:right;">';
+    html += `<button onclick="toggleRaw()" style="background:none;border:1px solid var(--border);color:var(--sub);padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">📋 ${I18N[currentLang].raw_json}</button>`;
+    html += '</div>';
+    html += '<div id="rawJson" style="display:none;margin-top:8px;background:#11111b;border-radius:8px;padding:14px;overflow-x:auto;font-size:12px;line-height:1.5;max-height:500px;overflow-y:auto;"><pre style="margin:0;color:#cdd6f4;white-space:pre-wrap;word-break:break-all;">';
+    html += escapeHtml(JSON.stringify(data, null, 2));
+    html += '</pre></div>';
+  }
 
   resultDiv.innerHTML = html;
 }
