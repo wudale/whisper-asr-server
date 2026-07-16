@@ -158,8 +158,7 @@ async def demo_page():
       <option value="ar">🇸🇦 العربية</option>
     </select>
     <select id="fmt">
-      <option value="verbose_json" selected data-i18n="fmt_verbose">Verbose (verbose_json)</option>
-      <option value="json" data-i18n="fmt_json">Plain text (json)</option>
+      <option value="json" selected data-i18n="fmt_json">Full (json)</option>
       <option value="text" data-i18n="fmt_text">Text (text)</option>
       <option value="srt" data-i18n="fmt_srt">Subtitle (srt)</option>
     </select>
@@ -188,7 +187,7 @@ curl -X POST ${API_BASE}/v1/audio/transcriptions \\
 curl -X POST ${API_BASE}/v1/audio/transcriptions \\
   -F "file=@recording.m4a" \\
   -F "language=zh" \\
-  -F "response_format=verbose_json"
+  -F "response_format=json"
 
 # Generate SRT subtitles
 curl -X POST ${API_BASE}/v1/audio/transcriptions \\
@@ -212,7 +211,7 @@ with open("recording.m4a", "rb") as f:
     r = requests.post(
         "${API_BASE}/v1/audio/transcriptions",
         files={"file": f},
-        data={"language": "zh", "response_format": "verbose_json"}
+        data={"language": "zh", "response_format": "json"}
     )
 data = r.json()
 print(f"Language: {data['language']}")
@@ -224,7 +223,7 @@ with open("recording.mp3", "rb") as f:
     r = requests.post(
         "${API_BASE}/v1/audio/transcriptions",
         files={"file": f},
-        data={"correct": "true", "response_format": "verbose_json"}
+        data={"correct": "true", "response_format": "json"}
     )
 data = r.json()
 print(f"Original: {data['text']}")
@@ -242,7 +241,7 @@ console.log(data.text);
 
 // Specify language + verbose
 fd.append("language", "zh");
-fd.append("response_format", "verbose_json");
+fd.append("response_format", "json");
 
 const r2 = await fetch(
   "${API_BASE}/v1/audio/transcriptions",
@@ -255,7 +254,7 @@ segments.forEach(s => console.log(`[${s.start}s] ${s.text}`));
 const fd3 = new FormData();
 fd3.append("file", fileInput.files[0]);
 fd3.append("correct", "true");
-fd3.append("response_format", "verbose_json");
+fd3.append("response_format", "json");
 const r3 = await fetch(
   "${API_BASE}/v1/audio/transcriptions",
   { method: "POST", body: fd3 }
@@ -294,7 +293,7 @@ RequestBody bodyZh = new MultipartBody.Builder()
         RequestBody.create(new File("recording.m4a"),
         MediaType.parse("audio/mp4")))
     .addFormDataPart("language", "zh")
-    .addFormDataPart("response_format", "verbose_json")
+    .addFormDataPart("response_format", "json")
     .build();
 
 // With LLM correction
@@ -304,7 +303,7 @@ RequestBody bodyCorrect = new MultipartBody.Builder()
         RequestBody.create(new File("recording.mp3"),
         MediaType.parse("audio/mpeg")))
     .addFormDataPart("correct", "true")
-    .addFormDataPart("response_format", "verbose_json")
+    .addFormDataPart("response_format", "json")
     .build();
 Request reqCorrect = new Request.Builder()
     .url("${API_BASE}/v1/audio/transcriptions")
@@ -332,8 +331,7 @@ const I18N = {
     drop_text: 'Drop audio file here or click to select',
     drop_hint: 'Supports mp3, wav, m4a, ogg, flac, mp4, mov, and more',
     auto_detect: 'Auto-detect language',
-    fmt_verbose: 'Verbose (verbose_json)',
-    fmt_json: 'Plain text (json)',
+    fmt_json: 'Full (json)',
     fmt_text: 'Text (text)',
     fmt_srt: 'Subtitle (srt)',
     btn_transcribe: 'Transcribe',
@@ -352,8 +350,7 @@ const I18N = {
     drop_text: '拖拽音频文件到这里，或点击选择',
     drop_hint: '支持 mp3、wav、m4a、ogg、flac、mp4、mov 等格式',
     auto_detect: '自动检测语言',
-    fmt_verbose: '详细输出 (verbose_json)',
-    fmt_json: '纯文本 (json)',
+    fmt_json: '完整输出 (json)',
     fmt_text: '纯文本 (text)',
     fmt_srt: '字幕格式 (srt)',
     btn_transcribe: '转录',
@@ -372,8 +369,7 @@ const I18N = {
     drop_text: '音声ファイルをドロップ、またはクリックして選択',
     drop_hint: 'mp3, wav, m4a, ogg, flac, mp4, mov など対応',
     auto_detect: '言語を自動検出',
-    fmt_verbose: '詳細 (verbose_json)',
-    fmt_json: 'プレーンテキスト (json)',
+    fmt_json: '完全出力 (json)',
     fmt_text: 'テキスト (text)',
     fmt_srt: '字幕 (srt)',
     btn_transcribe: '文字起こし',
@@ -392,8 +388,7 @@ const I18N = {
     drop_text: '오디오 파일을 여기에 드롭하거나 클릭하여 선택',
     drop_hint: 'mp3, wav, m4a, ogg, flac, mp4, mov 등 지원',
     auto_detect: '언어 자동 감지',
-    fmt_verbose: '상세 (verbose_json)',
-    fmt_json: '일반 텍스트 (json)',
+    fmt_json: '전체 출력 (json)',
     fmt_text: '텍스트 (text)',
     fmt_srt: '자막 (srt)',
     btn_transcribe: '텍스트 변환',
@@ -412,8 +407,7 @@ const I18N = {
     drop_text: 'Audio-Datei hier ablegen oder klicken zum Auswählen',
     drop_hint: 'Unterstützt mp3, wav, m4a, ogg, flac, mp4, mov u.a.',
     auto_detect: 'Sprache automatisch erkennen',
-    fmt_verbose: 'Ausführlich (verbose_json)',
-    fmt_json: 'Text (json)',
+    fmt_json: 'Vollständig (json)',
     fmt_text: 'Text (text)',
     fmt_srt: 'Untertitel (srt)',
     btn_transcribe: 'Transkribieren',
@@ -432,8 +426,7 @@ const I18N = {
     drop_text: 'Déposez le fichier audio ici ou cliquez pour sélectionner',
     drop_hint: 'Prend en charge mp3, wav, m4a, ogg, flac, mp4, mov, etc.',
     auto_detect: 'Détection automatique de la langue',
-    fmt_verbose: 'Détaillé (verbose_json)',
-    fmt_json: 'Texte brut (json)',
+    fmt_json: 'Complet (json)',
     fmt_text: 'Texte (text)',
     fmt_srt: 'Sous-titres (srt)',
     btn_transcribe: 'Transcrire',
@@ -452,8 +445,7 @@ const I18N = {
     drop_text: 'Перетащите аудиофайл сюда или нажмите для выбора',
     drop_hint: 'Поддерживает mp3, wav, m4a, ogg, flac, mp4, mov и др.',
     auto_detect: 'Автоопределение языка',
-    fmt_verbose: 'Подробно (verbose_json)',
-    fmt_json: 'Текст (json)',
+    fmt_json: 'Полный (json)',
     fmt_text: 'Текст (text)',
     fmt_srt: 'Субтитры (srt)',
     btn_transcribe: 'Расшифровать',
@@ -472,8 +464,7 @@ const I18N = {
     drop_text: 'اسحب ملف الصوت هنا أو انقر للاختيار',
     drop_hint: 'يدعم mp3, wav, m4a, ogg, flac, mp4, mov وغيرها',
     auto_detect: 'اكتشاف تلقائي للغة',
-    fmt_verbose: 'مفصل (verbose_json)',
-    fmt_json: 'نص عادي (json)',
+    fmt_json: 'كامل (json)',
     fmt_text: 'نص (text)',
     fmt_srt: 'ترجمة (srt)',
     btn_transcribe: 'نسخ',
@@ -521,7 +512,6 @@ function applyLang(lang) {
 // Select option templates keyed by select id
 const SELECT_OPTIONS = {
   fmt: [
-    { value: 'verbose_json', key: 'fmt_verbose' },
     { value: 'json',          key: 'fmt_json' },
     { value: 'text',          key: 'fmt_text' },
     { value: 'srt',           key: 'fmt_srt' },
@@ -788,7 +778,7 @@ async def transcribe(
 
     - `file`: audio file (mp3, wav, m4a, ogg, flac, etc.)
     - `language`: language code (e.g. "en", "zh") or None for auto-detect
-    - `response_format`: "json" (default), "text", "srt", "verbose_json"
+    - `response_format`: "json" (default, full with segments/duration/language), "text", "srt"
     - `correct`: enable LLM correction (requires LLM_API_KEY env)
     """
     if not file.filename:
@@ -894,23 +884,15 @@ async def transcribe(
                 resp["correction"] = correction
             return JSONResponse(resp)
 
-        if response_format == "verbose_json":
-            resp = {
-                "text": full_text,
-                "language": info.language,
-                "duration": info.duration,
-                "segments": corrected_seg_list or [_seg_to_dict(s) for s in seg_list],
-            }
-            if correction:
-                resp["correction"] = correction
-            return resp
-
-        # Default: "json"
-        resp = {"text": full_text}
+        # Default: "json" (also accepts "verbose_json" for backward compat)
+        resp = {
+            "text": full_text,
+            "language": info.language,
+            "duration": info.duration,
+            "segments": corrected_seg_list or [_seg_to_dict(s) for s in seg_list],
+        }
         if correction:
             resp["correction"] = correction
-        if corrected_seg_list:
-            resp["segments"] = corrected_seg_list
         return resp
 
     except Exception as e:
@@ -1113,9 +1095,6 @@ def transcribe_cli(
             lines.append("")
         output = "\n".join(lines)
     elif fmt == "json":
-        resp = {"text": full_text}
-        output = json.dumps(resp, ensure_ascii=False)
-    elif fmt == "verbose_json":
         resp = {
             "text": full_text,
             "language": info.language,
@@ -1144,7 +1123,7 @@ def _parse_main_args():
     p = argparse.ArgumentParser(description="Whisper ASR Service")
     p.add_argument("--transcribe", metavar="FILE", help="Transcribe a file and exit (CLI mode, no server)")
     p.add_argument("--language", default=None, help="Language code (e.g. en, zh, ja)")
-    p.add_argument("--format", default="text", choices=["text", "json", "srt", "verbose_json"], help="Output format (default: text)")
+    p.add_argument("--format", default="text", choices=["text", "json", "srt"], help="Output format (default: text)")
     p.add_argument("--model", default=None, help=f"Model size (default: {MODEL_SIZE})")
     p.add_argument("--output", default=None, help="Save output to file instead of stdout")
     p.add_argument("--correct", action="store_true", help="Enable LLM correction (requires LLM_API_KEY)")

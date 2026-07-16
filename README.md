@@ -102,7 +102,7 @@ OpenAI Audio Transcription API compatible.
 |-----------|------|:--------:|-------------|
 | `file` | file | ✅ | Audio/video (mp3, wav, m4a, ogg, flac, mp4, mov, etc.) |
 | `language` | string | ❌ | Language code; omit for auto-detection (99+ languages) |
-| `response_format` | string | ❌ | `json` (default), `text`, `srt`, `verbose_json` |
+| `response_format` | string | ❌ | `json` (default, full output with segments/duration/language), `text`, `srt` |
 | `correct` | bool | ❌ | Enable LLM post-correction (requires `LLM_MODEL`)
 
 ### Examples
@@ -135,7 +135,7 @@ console.log((await r.json()).text);
 # Add correct=true to enable LLM post-processing
 curl -X POST http://localhost:9080/v1/audio/transcriptions \
   -F "file=@recording.mp3" -F "correct=true" \
-  -F "response_format=verbose_json"
+  -F "response_format=json"
 # Response: { text, language, duration, segments: [{ id, start, end, text, group_id, corrected_text }], correction: "completed" }
 ```
 
@@ -153,7 +153,7 @@ try (Response r = new OkHttpClient().newCall(
 
 ### Response Formats
 
-**verbose_json** — full segments with timestamps:
+**json** (default) — full response with segments, timestamps, language:
 ```json
 {
   "text": "Full transcription text",
@@ -236,7 +236,7 @@ Segments are grouped by silence gaps. Consecutive segments with gaps < `CORRECTI
 curl -X POST http://localhost:9080/v1/audio/transcriptions \
   -F "file=@recording.mp3" \
   -F "correct=true" \
-  -F "response_format=verbose_json"
+  -F "response_format=json"
 
 # Response includes corrected_text
 {
@@ -295,7 +295,7 @@ python3 whisper_server.py --transcribe meeting.mp3 --format srt --output meeting
 # All CLI options
 python3 whisper_server.py --transcribe <file> \
     --language en|zh|ja|ko|... \   # omit for auto-detect
-    --format text|json|srt|verbose_json \
+    --format text|json|srt \
     --model tiny|base|small|medium|large-v3 \
     --output result.txt \           # save to file
     --correct \                     # enable LLM correction
@@ -320,7 +320,7 @@ Pre-recorded samples in 9 languages:
 # Quick test any sample
 curl -X POST http://localhost:9080/v1/audio/transcriptions \
   -F "file=@samples/zh.wav" \
-  -F "response_format=verbose_json"
+  -F "response_format=json"
 ```
 
 ## 🤖 For AI Agents
@@ -335,7 +335,7 @@ curl -X POST http://<server>:9080/v1/audio/transcriptions \
 # With language hint and detailed output
 curl -X POST http://<server>:9080/v1/audio/transcriptions \
   -F "file=@audio.mp3" -F "language=zh" \
-  -F "response_format=verbose_json"
+  -F "response_format=json"
 
 # With LLM correction enabled (requires LLM_MODEL env)
 curl -X POST http://<server>:9080/v1/audio/transcriptions \
